@@ -1,0 +1,13 @@
+torch
+torchvision
+dominate==2.4.0
+dill
+scipy
+pandas
+Pillow
+pyyaml
+scikit-image
+imgaug
+sklearn
+tqdm
+natsort
