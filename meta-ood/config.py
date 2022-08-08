@@ -9,7 +9,7 @@ MODELS      = ["DeepLabV3+_WideResNet38", "DualGCNNet_res50", "Detectron_DeepLab
 
 TRAINSET    = TRAINSETS[0]
 VALSET      = VALSETS[1]
-MODEL       = MODELS[2]
+MODEL       = MODELS[3]
 #IO          = "/home/chan/io/ood_detection/"
 IO = "/home/kumarasw/Thesis/meta-ood/results"
 Detectron_PanopticDeepLab_Config = "/home/kumarasw/Thesis/meta-ood/src/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
@@ -21,8 +21,8 @@ class cs_coco_roots:
     """
     model_name  = MODEL
     #init_ckpt = "/home/kumarasw/original-meta/meta-ood/weights/cityscapes_best.pth"
-    #init_ckpt   = "/home/kumarasw/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
-    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/deeplab_model_final_a8a355.pkl"
+    init_ckpt   = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
+    #init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/deeplab_model_final_a8a355.pkl"
     cs_root     = "/export/kiran/cityscapes/"
     coco_root   = "/export/kiran/coco/2017/"
     io_root     = IO + "meta_ood_" + model_name
@@ -64,13 +64,13 @@ class params:
     Set pipeline parameters
     """
     training_starting_epoch = 0
-    num_training_epochs     = 3
+    num_training_epochs     = 4
     pareto_alpha            = 0.9
     ood_subsampling_factor  = 0.1
     learning_rate           = 1e-5
-    crop_size               = (512, 1024)
+    crop_size               = (1024, 2048)
     val_epoch               = num_training_epochs
-    batch_size              = 2
+    batch_size              = 1
     entropy_threshold       = 0.7
 
 

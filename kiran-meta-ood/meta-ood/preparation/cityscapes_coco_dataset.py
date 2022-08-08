@@ -87,7 +87,7 @@ def apply_blending(mask, cityscapes_coco_panoptic_values, cityscapes_disparity_i
         if kernel_size % 2 == 0:
             kernel_size = kernel_size - 1
         blurred_img = cv2.GaussianBlur(cityscapes_masked_image, (kernel_size, kernel_size), 0)
-        print("Kernel_size ",  kernel_size)
+        #print("Kernel_size ",  kernel_size)
         cityscapes_masked_image[mask] = blurred_img[mask]
 
     Image.fromarray(cityscapes_masked_image).save(os.path.join("/home/kumarasw/kiran/cityscapes_coco", "gaussian_depth_blur.png"))
@@ -103,7 +103,7 @@ def apply_blending(mask, cityscapes_coco_panoptic_values, cityscapes_disparity_i
 
 
 # The main method
-def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, cocoPath=None, cocoSplit=None, cocoYear=None, outputFolder=None, useTrainId=False, setNames=["val", "train", "test"]):
+def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, cocoPath=None, cocoSplit=None, cocoYear=None, outputFolder=None, useTrainId=True, setNames=["val", "train", "test"]):
     # Where to look for Cityscapes
     if cityscapesPath is None:
         if 'CITYSCAPES_DATASET' in os.environ:
@@ -126,14 +126,16 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
 
     coco_json_file = os.path.join(outputFolder, "coco_instances.json")
     coco_json_data = json.load(open(coco_json_file))
-    for coco_id, value in coco_json_data.items():
+    for count, (coco_id, value) in enumerate(coco_json_data.items()):
         if (os.path.exists(coco_json_data[coco_id]["rgb_image"]) and
             os.path.exists(coco_json_data[coco_id]["panoptic_image"]) and
             os.path.exists(coco_json_data[coco_id]["semantic_image"])):
             coco_img_Ids.append(coco_id)
+            if count == 200:
+                break
         else:
             print("missing ", coco_id)
-
+    coco_img_Ids.sort()
     mode = "gtFine"
 
     categories = []
@@ -163,13 +165,20 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
     print("Converting {} annotation files for {} set.".format(len(cityscapes_files), cityscapesSplit))
 
 
-    outputBaseFile = os.path.join(outputFolder, "cityscapes_"+cityscapesSplit+"_coco_"+cocoSplit)
+    #outputBaseFile = os.path.join(outputFolder, "cityscapes_"+cityscapesSplit+"_coco_"+cocoSplit)
+    outputBaseFile = os.path.join(outputFolder, "cityscapes_ood", "gtFine", "cityscapes_panoptic_"+cityscapesSplit)
     outFile = outputBaseFile+".json"
+    labelIdsPath = os.path.join(outputFolder, "cityscapes_ood", "gtFine", cityscapesSplit)
+    left8bitImgPath = os.path.join(outputFolder, "cityscapes_ood", "leftImg8bit", cityscapesSplit)
 
     if not os.path.isdir(outputBaseFile):
         print("Creating folder {} for saving OOD images and ground truth".format(outputBaseFile))
         os.makedirs(outputBaseFile, exist_ok=True)
     print("Corresponding segmentation ground truth will be saved in {}".format(outFile))
+    if not os.path.isdir(left8bitImgPath):
+        print("Creating folder {} for saving left8bit images ".format(left8bitImgPath))
+        os.makedirs(left8bitImgPath, exist_ok=True)
+    
 
     # load instance scale json file if exists else create a new one
     # This file contains the average size of the cityscapes instance at certain distance divided into bins
@@ -244,8 +253,8 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
                 scale_map[key].append(int(mean))
 
 
-        outFile = os.path.join(outputFolder, scale_output_json)
-        print("\nSaving the scale json file {}".format(outFile))
+        scaleOutFile = os.path.join(outputFolder, scale_output_json)
+        print("\nSaving the scale json file {}".format(scaleOutFile))
 
         with open(outFile, 'w') as f:
             json.dump(scale_map, f, sort_keys=True, indent=4)
@@ -260,9 +269,11 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
         fileName = os.path.basename(f)
         cityscapes_imageId = fileName.replace("_gtFine_instanceIds.png", "")
         cityscapes_inputFileName = fileName.replace("_gtFine_instanceIds.png", "_leftImg8bit.png")
+        cityscapes_labelIdsName = fileName.replace("_instanceIds.png", "_labelIds.png")
         cityscapes_disparity_name = fileName.replace("_gtFine_instanceIds.png", "_disparity.png")
         city_name = cityscapes_inputFileName.split("_")[0]
         cityscapes_img_path = os.path.join(cityscapesPath, "leftImg8bit", cityscapesSplit, city_name, cityscapes_inputFileName)
+        cityscapes_labelIDs_path = os.path.join(cityscapesPath, "gtFine", cityscapesSplit, city_name, cityscapes_labelIdsName)
         cityscapes_disparity_path = os.path.join(cityscapesPath, "disparity", cityscapesSplit, city_name,
                                                  cityscapes_disparity_name)
         cityscapes_disparity_img = np.array(Image.open(cityscapes_disparity_path))
@@ -276,10 +287,14 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
                        "height": int(originalFormat.shape[0]),
                        "file_name": cityscapes_inputFileName})
         cityscapes_leftImg8bit_img = np.array(Image.open(cityscapes_img_path))
+        cityscapes_labelIds_img = np.array(Image.open(cityscapes_labelIDs_path))
 
         cityscapes_pan_format = np.zeros(
             (originalFormat.shape[0], originalFormat.shape[1], 3), dtype=np.uint8
         )
+
+        cityscapes_labelIDs = np.copy(cityscapes_labelIds_img)
+        cityscapes_instanceIDs = np.copy(originalFormat)
 
         segmentIds = np.unique(originalFormat)
         segmInfo = []
@@ -323,7 +338,7 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
         # add ood objects from coco to cityscapes image
 
         segment_info = []
-        ood_panoptic_name = "{}_panoptic.png".format(cityscapes_imageId)
+        ood_panoptic_name = "{}_gtFine_panoptic.png".format(cityscapes_imageId)
         ood_image_name = "{}_leftImg8bit.png".format(cityscapes_imageId)
 
         coco_masked_image = np.zeros((city_height, city_width, 3), dtype="uint8")
@@ -331,13 +346,13 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
 
         coco_masked_panoptic = np.zeros((city_height, city_width, 3), dtype="uint8")
         cityscapes_masked_panoptic = np.ones((city_height, city_width, 3), dtype="uint8")
-        cityscapes_coco_panoptic_values = np.zeros((city_height, city_width))
+        cityscapes_coco_panoptic_values = np.zeros((city_height, city_width), dtype=np.int32)
 
         roadPixelID = 0 if useTrainId else 7
         road_pixels = np.where(originalFormat == roadPixelID)
 
-        random_instances = random.randint(1, 2)
-        random_instance_count = 1
+        random_instances = random.randint(1, 3)
+        random_instance_count = 0
         for i in range (random_instances):
             id = coco_img_Ids[instance_count % len(coco_img_Ids)]
             instance = coco_json_data[id]
@@ -366,9 +381,9 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
             start_width = road_pixels[1][road_eligible_pixels[road_random_pixel]]
             start_height = road_pixels[0][road_eligible_pixels[road_random_pixel]] - coco_h
 
-            color1 = np.array([255, 0, 0], dtype=np.uint8)
+            '''color1 = np.array([255, 0, 0], dtype=np.uint8)
             cityscapes_masked_image[road_pixels[0][road_eligible_pixels[road_random_pixel]] : road_pixels[0][road_eligible_pixels[road_random_pixel]] +10, start_width: start_width+10] = color1
-            
+            '''
 
             # incase of grouped images scaling based on first object will scale all other objects
             segment_name = instance["semantic_names"][0]
@@ -384,7 +399,7 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
             average_area = int(scale_map[cityscape_relative_instance][int(bin)] * cityscape_relative_scale_factor)           
             
             
-            print(segment_name, cityscape_relative_instance, disparity_at_start_pixel, average_disparity, bin, scale_map[cityscape_relative_instance], (start_height , start_width), cityscapes_imageId)
+            #segment_name, cityscape_relative_instance, disparity_at_start_pixel, average_disparity, bin, scale_map[cityscape_relative_instance], (start_height , start_width), cityscapes_imageId)
 
             # if the scale map value is zero then it means we dont have an example in training data with corresponding disparity value
             # in that case get the next smallest bin size of the object
@@ -433,7 +448,7 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
             start_width += diff_w
             start_height += diff_h '''
             
-            print(scaling_factor, (average_area, area), (coco_h, coco_w), (scaled_h, scaled_w))
+            #print(scaling_factor, (average_area, area), (coco_h, coco_w), (scaled_h, scaled_w))
             coco_h = coco_scaled_h
             coco_w = coco_scaled_w
 
@@ -446,7 +461,7 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
 
             coco_panoptic_format = np.zeros((coco_h, coco_w, 3), dtype="uint8")
             coco_image_format = np.zeros((coco_h, coco_w, 3), dtype="uint8")
-            coco_panoptic_values = np.zeros((coco_h, coco_w))
+            coco_panoptic_values = np.zeros((coco_h, coco_w), dtype=np.int32)
 
             for index, coco_instance_id in enumerate(instance["instance_ids"]):
                 semantic_id = coco_instance_id // 1000
@@ -475,15 +490,15 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
                 y = vert_idx[0]
                 height = vert_idx[-1] - y + 1
                 # add start width and height to accommodate the bounding box positions in original cityscapes size
-                bbox = [start_width + int(x), start_height+ int(y), int(width), int(height)]
+                bbox = [int(start_width) + int(x), int(start_height)+ int(y), int(width), int(height)]
 
                 # draw bounding box
-                color = np.array([0, 255, 0], dtype=np.uint8)
+                '''color = np.array([0, 255, 0], dtype=np.uint8)
                 cityscapes_masked_image[start_height + int(y): start_height + int(y) + int(height), start_width + int(x): start_width + int(x) + 2] = color
                 cityscapes_masked_image[start_height + int(y): start_height + int(y) + int(height), start_width + int(x)+int(width): start_width + int(x)+int(width) + 2] = color
                 cityscapes_masked_image[start_height + int(y): start_height + int(y)+2 , start_width + int(x): start_width + int(x) + int(width)] = color
                 cityscapes_masked_image[start_height + int(y) + int(height): start_height + int(y)  + int(height)+2, start_width + int(x): start_width + int(x) + int(width)] = color
-
+                '''
 
                 segmInfo.append({"id": int(segmentId),
                                  "category_id": int(categoryId),
@@ -524,10 +539,27 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
         cityscapes_masked_panoptic *= cityscapes_pan_format
         cityscapes_masked_panoptic += coco_masked_panoptic
 
+        mask = np.where(cityscapes_coco_panoptic_values > 0)
+        cityscapes_labelIDs[mask] = ood_id
+
+        mask = np.where(cityscapes_coco_panoptic_values > 0)
+        cityscapes_instanceIDs[mask] = 0
+        cityscapes_instanceIDs +=  cityscapes_coco_panoptic_values
+
         cityscapes_masked_image = apply_blending(mask, cityscapes_coco_panoptic_values, cityscapes_disparity_img, cityscapes_masked_image, cityscapes_leftImg8bit_img)
 
         Image.fromarray(cityscapes_masked_panoptic).save(os.path.join(outputBaseFile, ood_panoptic_name))
-        Image.fromarray(cityscapes_masked_image).save(os.path.join(outputBaseFile, ood_image_name))
+
+        if not os.path.isdir(os.path.join(left8bitImgPath, city_name)):
+            os.makedirs(os.path.join(left8bitImgPath, city_name), exist_ok=True)
+        Image.fromarray(cityscapes_masked_image).save(os.path.join(left8bitImgPath, city_name, ood_image_name))
+
+        if not os.path.isdir(os.path.join(labelIdsPath, city_name)):
+            os.makedirs(os.path.join(labelIdsPath, city_name), exist_ok=True)
+
+        Image.fromarray(cityscapes_labelIDs).save(os.path.join(labelIdsPath, city_name, cityscapes_labelIdsName))
+        Image.fromarray(cityscapes_instanceIDs).save(os.path.join(labelIdsPath, city_name, fileName))
+        
 
         annotations.append({'image_id': cityscapes_imageId,
                             'file_name': outputFileName,
@@ -535,6 +567,9 @@ def create_cityscapes_coco_panoptic(cityscapesPath=None, cityscapesSplit=None, c
 
         print("\rProgress: {:>3.2f} %".format((progress + 1) * 100 / len(cityscapes_files)), end=' ')
         sys.stdout.flush()
+
+        if progress == 10:
+            break
 
     print("\nSaving the json file {}".format(outFile))
     d = {'images': images,

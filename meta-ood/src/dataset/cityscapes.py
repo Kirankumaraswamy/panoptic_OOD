@@ -84,20 +84,21 @@ class Cityscapes(Dataset):
         self.split = split
         self.mode = 'gtFine' if "fine" in mode.lower() else 'gtCoarse'
         self.transform = transform
-        self.images_dir = os.path.join(self.root, 'leftImg8bit', self.split)
-        self.targets_dir = os.path.join(self.root, self.mode, "cityscapes_panoptic_"+self.split)
-        self.json_file = os.path.join(self.root, self.mode, "cityscapes_panoptic_", self.split, ".json")
-        self.predictions_dir = os.path.join(predictions_root, self.split) if predictions_root is not None else ""
         self.images = []
         self.targets = []
         self.predictions = []
-        self.cityscapes_data_dicts = DatasetCatalog.get("cityscapes_fine_panoptic_train")
+        if self.split == "train":
+            self.cityscapes_data_dicts = DatasetCatalog.get("cityscapes_fine_panoptic_train")
+        elif self.split == "test":
+            self.cityscapes_data_dicts = DatasetCatalog.get("cityscapes_fine_panoptic_test")
+        else:
+            self.cityscapes_data_dicts = DatasetCatalog.get("cityscapes_fine_panoptic_val")
         for i in range(len(self.cityscapes_data_dicts)):
             self.cityscapes_data_dicts[i]["dataset"] = "cityscapes"
 
     def __getitem__(self, index: int) -> Tuple[Any, Any]:
         image = Image.open(self.images[index]).convert('RGB')
-        if self.split in ['train', 'val']:
+        if self.split in ['train', 'val', 'test']:
             target = Image.open(self.targets[index])
         else:
             target = None
