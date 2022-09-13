@@ -22,6 +22,7 @@ from detectron2.structures import BitMasks, ImageList, Instances
 from detectron2.utils.registry import Registry
 
 from .post_processing import get_panoptic_segmentation
+from scipy.stats import entropy
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -80,13 +81,11 @@ class PanopticDeepLab(nn.Module):
         Returns:
             list[dict]:
                 each dict is the results for one image. The dict contains the following keys:
-
                 * "panoptic_seg", "sem_seg": see documentation
                     :doc:`/tutorials/models` for the standard output format
                 * "instances": available if ``predict_instances is True``. see documentation
                     :doc:`/tutorials/models` for the standard output format
         """
-        results = {}
         images = [x["image"].to(self.device) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         # To avoid error in ASPP layer when input has different size.
@@ -116,7 +115,6 @@ class PanopticDeepLab(nn.Module):
             targets = None
             weights = None
         sem_seg_results, sem_seg_losses = self.sem_seg_head(features, targets, weights)
-        results["sem_seg_results"] = sem_seg_results
         losses.update(sem_seg_losses)
 
         if "center" in batched_inputs[0] and "offset" in batched_inputs[0]:
@@ -143,11 +141,9 @@ class PanopticDeepLab(nn.Module):
         )
         losses.update(center_losses)
         losses.update(offset_losses)
-        results["center_results"] = center_results
-        results["offset_results"] = offset_results
 
         if self.training:
-            return results, losses
+            return losses
 
         if self.benchmark_network_speed:
             return []
@@ -156,22 +152,25 @@ class PanopticDeepLab(nn.Module):
         for sem_seg_result, center_result, offset_result, input_per_image, image_size in zip(
             sem_seg_results, center_results, offset_results, batched_inputs, images.image_sizes
         ):
-
-            '''import matplotlib.pyplot as plt
-            a = torch.argmax(sem_seg_results, dim=1).cpu()
-            a = a.detach().numpy()
-            a = np.moveaxis(a, 0, -1)
-            plt.imshow(a)
-            plt.show()'''
-
             height = input_per_image.get("height")
             width = input_per_image.get("width")
             r = sem_seg_postprocess(sem_seg_result, image_size, height, width)
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
+
+            softmax_out = r.detach().cpu().numpy()
+            sem_out = r.argmax(dim=0).cpu().numpy()
+            # sem_out = F.softmax(output[0]['sem_seg'], 0)
+            ent = entropy(softmax_out, axis=0) / np.log(19)
+            sem_out[np.where(ent > 0.5)] = 19
+            sem_out = torch.tensor(sem_out)
+            sem_out = sem_out.unsqueeze(dim=0)
+            c = c.cpu()
+            o = o.cpu()
+
             # Post-processing to get panoptic segmentation.
             panoptic_image, _ = get_panoptic_segmentation(
-                r.argmax(dim=0, keepdim=True),
+                sem_out,
                 c,
                 o,
                 thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
@@ -184,7 +183,6 @@ class PanopticDeepLab(nn.Module):
             )
             # For semantic segmentation evaluation.
             processed_results.append({"sem_seg": r})
-            processed_results.append(({"center_heat_map": c}))
             panoptic_image = panoptic_image.squeeze(0)
             semantic_prob = F.softmax(r, dim=0)
             # For panoptic segmentation evaluation.
@@ -255,7 +253,6 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
     ):
         """
         NOTE: this interface is experimental.
-
         Args:
             input_shape (ShapeSpec): shape of the input feature
             decoder_channels (list[int]): a list of output channels of each
@@ -343,7 +340,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         """
         y = self.layers(features)
         if self.training:
-            return self.losses(y, targets, weights)
+            return None, self.losses(y, targets, weights)
         else:
             y = F.interpolate(
                 y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
@@ -363,7 +360,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         )
         loss = self.loss(predictions, targets, weights)
         losses = {"loss_sem_seg": loss * self.loss_weight}
-        return predictions, losses
+        return losses
 
 
 def build_ins_embed_branch(cfg, input_shape):
@@ -394,7 +391,6 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
     ):
         """
         NOTE: this interface is experimental.
-
         Args:
             input_shape (ShapeSpec): shape of the input feature
             decoder_channels (list[int]): a list of output channels of each
@@ -528,13 +524,11 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         """
         center, offset = self.layers(features)
         if self.training:
-            center_pred, center_loss = self.center_losses(center, center_targets, center_weights)
-            offset_pred, offset_loss = self.offset_losses(offset, offset_targets, offset_weights)
             return (
-                center_pred,
-                offset_pred,
-                center_loss,
-                offset_loss
+                None,
+                None,
+                self.center_losses(center, center_targets, center_weights),
+                self.offset_losses(offset, offset_targets, offset_weights),
             )
         else:
             center = F.interpolate(
@@ -569,7 +563,7 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         else:
             loss = loss.sum() * 0
         losses = {"loss_center": loss * self.center_loss_weight}
-        return predictions, losses
+        return losses
 
     def offset_losses(self, predictions, targets, weights):
         predictions = (
@@ -584,4 +578,4 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         else:
             loss = loss.sum() * 0
         losses = {"loss_offset": loss * self.offset_loss_weight}
-        return predictions, losses
+        return losses

@@ -30,6 +30,7 @@ def load_network(model_name, num_classes, ckpt_path=None, train=False, cfg=None)
     print("Load model:", model_name, end="", flush=True)
     if model_name == "DeepLabV3+_WideResNet38":
         network = nn.DataParallel(DeepWV3Plus(num_classes))
+        #network = DeepWV3Plus(num_classes)
     elif model_name == "DualGCNNet_res50":
         network = DualSeg_res50(num_classes)
     elif model_name == "Detectron_DeepLab" or model_name == "Detectron_Panoptic_DeepLab":
@@ -166,19 +167,20 @@ class inference(object):
         x, y = self.loader[i]
         if not isinstance(x, list):
             x = x.unsqueeze_(0)
-        import matplotlib.pyplot as plt
+
+        '''import matplotlib.pyplot as plt
         plt.imshow(x[0]["image"].permute(1, 2, 0).numpy())
-        plt.savefig("/home/kumarasw/Thesis/driving_uncertainty/image.png")
+        plt.savefig("/home/kumarasw/Thesis/driving_uncertainty/image.png")'''
         sem_seg, panoptic_seg, center_heat_map = prediction(self.net, x)
         probs = sem_seg
         gt_train = y.numpy()
-        import matplotlib.pyplot as plt
+        '''import matplotlib.pyplot as plt
         plt.imshow(x[0]["image"].permute(1, 2, 0).numpy())
         #plt.imshow(x.squeeze().permute(1, 2, 0).numpy())
         plt.show()
         out = probs.argmax(axis=0)
         plt.imshow(out)
-        plt.show()
+        plt.show()'''
 
         try:
             gt_label = np.array(Image.open(self.loader.annotations[i]).convert('L'))

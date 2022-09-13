@@ -60,7 +60,8 @@ def semantic_process(inputs, outputs):
         basename = os.path.splitext(os.path.basename(file_name))[0]
         pred_filename = os.path.join(working_dir.name, basename + "_pred.png")
 
-        output = output["sem_seg"].argmax(dim=0).cpu().numpy()
+        #output["sem_seg"].argmax(dim=0).cpu().numpy()
+        output = output["sem_seg"].numpy()
         pred = 255 * np.ones(output.shape, dtype=np.uint8)
         for train_id, label in trainId2label.items():
             if label.ignoreInEval:
@@ -291,7 +292,7 @@ def data_load(root=None, split="val", transform=None):
     datset = CityscapesOOD(root, split, transform )
     return datset
 
-def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate_fn=None):
+def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate_fn=None, semantic_only=False):
 
     dataloader = DataLoader(evaluation_dataset, batch_size=batch_size,
                     collate_fn=collate_fn)
@@ -300,29 +301,31 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
         print("count: ", count)
         logits = estimator(inputs)
 
-        predictions += panoptic_process(inputs, logits)
         semantic_process(inputs, logits)
-        instance_process(inputs, logits)
+        if not semantic_only:
+            predictions += panoptic_process(inputs, logits)
+            instance_process(inputs, logits)
         del logits
         torch.cuda.empty_cache()
-
-        if count == 5:
-            break
 
     gt_path = evaluation_dataset.root
     semantic_result = sematic_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
     print(semantic_result)
-    panoptic_result = panoptic_evaluate(predictions, os.path.join(gt_path, "gtFine", "cityscapes_panoptic_"+evaluation_dataset.split +".json"), os.path.join(gt_path, "gtFine", "cityscapes_panoptic_val"))
-    instance_result = instance_evaluate(os.path.join(gt_path, "gtFine", "val"))
+
+    if not semantic_only:
+        panoptic_result = panoptic_evaluate(predictions, os.path.join(gt_path, "gtFine", "cityscapes_panoptic_"+evaluation_dataset.split +".json"), os.path.join(gt_path, "gtFine", "cityscapes_panoptic_"+evaluation_dataset.split))
+        instance_result = instance_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
 
     working_dir.cleanup()
     instance_working_dir.cleanup()
 
-    return({
-        "semantic_seg": semantic_result,
-        "panotic_seg": panoptic_result,
-        "instance_seg": instance_result
-    })
+    result = {}
+    result["semantic_seg"] = semantic_result
+
+    if not semantic_only:
+        result["panotic_seg"] = panoptic_result
+        result["instance_seg"] = instance_result
+    return  result
 
 
 if __name__ == '__main__':
