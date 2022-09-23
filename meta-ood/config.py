@@ -9,7 +9,7 @@ MODELS      = ["DeepLabV3+_WideResNet38", "DualGCNNet_res50", "Detectron_DeepLab
 
 TRAINSET    = TRAINSETS[0]
 VALSET      = VALSETS[1]
-MODEL       = MODELS[3]
+MODEL       = MODELS[0]
 #IO          = "/home/chan/io/ood_detection/"
 IO = "/home/kumarasw/Thesis/meta-ood/results"
 Detectron_PanopticDeepLab_Config = "/home/kumarasw/Thesis/meta-ood/src/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
@@ -51,7 +51,8 @@ class fs_roots:
     model_name = MODEL
     #init_ckpt = os.path.join("/home/kumarasw/meta-ood/weights/DeepLabV3+_WideResNet38_epoch_4_alpha_0.9.pth")
     #init_ckpt = "/home/kumarasw/original-meta/meta-ood/weights/cityscapes_best.pth"
-    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/deeplab_model_final_a8a355.pkl"
+    #init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/deeplab_model_final_a8a355.pkl"
+    init_ckpt ="/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
     # eval_dataset_root = "/home/datasets/fishyscapes/"
     eval_dataset_root = "/export/kiran/fishy_scapes_lost_and_found/"
     eval_sub_dir = "fs_eval"

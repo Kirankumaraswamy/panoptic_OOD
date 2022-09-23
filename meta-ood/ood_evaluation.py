@@ -26,7 +26,8 @@ class AnomalyDetector():
         self.transform = transform
 
     def estimator_worker(self, image):
-        output = self.network(image)
+        output = self.network(torch.unsqueeze(image[0]["image"], dim=0))
+        #output = self.network(image)
         softmax_out = F.softmax(output[0]['sem_seg'])
         softmax_out = softmax_out.detach().cpu().numpy()
         sem_out = output[0]["sem_seg"].argmax(dim=0).cpu().numpy()
@@ -36,7 +37,7 @@ class AnomalyDetector():
 
         output[0]['sem_seg'] = torch.tensor(sem_out)
 
-        '''import matplotlib.pyplot as plt
+        import matplotlib.pyplot as plt
         plt.imshow(sem_out)
         plt.savefig("/home/kumarasw/kiran/segment.png")
 
@@ -44,7 +45,7 @@ class AnomalyDetector():
         plt.imshow(torch.permute(image[0]["image"], (1, 2, 0)).numpy())
         plt.savefig("/home/kumarasw/kiran/image.png")
         plt.imshow(ent)
-        plt.savefig("/home/kumarasw/kiran/mask.png")'''
+        plt.savefig("/home/kumarasw/kiran/mask.png")
 
 
         return output
@@ -68,16 +69,16 @@ def evaluate(args):
 
     add_panoptic_deeplab_config(cfg)
     
-    cfg.merge_from_file("/home/kumarasw/Thesis/meta-ood/src/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024.yaml")
+    '''cfg.merge_from_file("/home/kumarasw/Thesis/meta-ood/src/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024.yaml")
     model_name = "Detectron_Panoptic_DeepLab"    
-    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
+    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"'''
 
     '''model_name = "Detectron_DeepLab"
     cfg.merge_from_file("/home/kumarasw/Thesis/meta-ood/src/config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml")
     init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/Detectron_DeepLab_epoch_4_alpha_0.9.pth"'''
 
-    '''model_name = "DeepLabV3+_WideResNet38"
-    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/Detectron_DeepLab_epoch_4_alpha_0.9.pth"'''
+    model_name = "DeepLabV3+_WideResNet38"
+    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/Detectron_DeepLab_epoch_4_alpha_0.9.pth"
     
     """Initialize model"""
     if start_epoch == 0:
@@ -87,9 +88,9 @@ def evaluate(args):
     
     transform = Compose([ToTensor(), Normalize(CityscapesOOD.mean, CityscapesOOD.std)]) 
     #ds = data_load(root="/export/kiran/cityscapes/", split="val", transform=transform)/home/kumarasw/kiran/cityscapes_coco/cityscapes_val_coco_val
-    ds = data_load(root="/home/kumarasw/kiran/filtered_cityscapes_ood/cityscapes_ood", split="train", transform=transform)
+    ds = data_load(root="/home/kumarasw/OOD_dataset/filtered_OOD_dataset/cityscapes_ood", split="val", transform=transform)
     detector = AnomalyDetector(network, ds, transform)
-    result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds, collate_fn=panoptic_deep_lab_collate, semantic_only=False)
+    result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds, collate_fn=panoptic_deep_lab_collate, semantic_only=True)
     print("====================================================")
     print(result)
 

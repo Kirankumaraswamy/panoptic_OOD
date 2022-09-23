@@ -308,6 +308,9 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
         del logits
         torch.cuda.empty_cache()
 
+        if count == 10:
+            break
+
     gt_path = evaluation_dataset.root
     semantic_result = sematic_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
     print(semantic_result)

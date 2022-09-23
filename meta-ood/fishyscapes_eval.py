@@ -28,6 +28,7 @@ class AnomalyDetector():
         self.transform = transform
 
     def estimator_worker(self, image):
+        
         image = torch.tensor(image.numpy())
         image = torch.permute(image, (-1, 0, 1))
         input = [{"image": image, "height": image.size()[1], "width": image.size()[2]}]
@@ -36,18 +37,18 @@ class AnomalyDetector():
         sem_out = F.softmax(output[0]['sem_seg'], 0)        
         
         sem_out = sem_out.detach().cpu().numpy()
-        '''
-        import matplotlib.pyplot as plt
-        plt.imshow(sem_out.argmax(axis=0))
-        plt.savefig("/home/kumarasw/Thesis/driving_uncertainty/segment.png")'''
+
         ent = entropy(sem_out, axis=0) / np.log(self.dataset.num_eval_classes)
 
-        '''
+        '''import matplotlib.pyplot as plt
+        plt.imshow(sem_out.argmax(axis=0))
+        plt.savefig("/home/kumarasw/Thesis/driving_uncertainty/segment.png")       
+
+
         plt.imshow(torch.permute(image, (1, 2, 0)).numpy())
         plt.savefig("/home/kumarasw/Thesis/driving_uncertainty/image.png")
         plt.imshow(ent)
         plt.savefig("/home/kumarasw/Thesis/driving_uncertainty/mask.png")'''
-
         return torch.tensor(ent)
 
 def main(args):
