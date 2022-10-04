@@ -17,3 +17,4 @@ tensorflow_datasets
 tensorflow
 git+https://github.com/cocodataset/panopticapi.git
 git+https://github.com/mcordts/cityscapesScripts.git
+git+https://github.com/hermannsblum/bdl-benchmark.git

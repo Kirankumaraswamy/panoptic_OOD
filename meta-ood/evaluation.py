@@ -61,10 +61,10 @@ class eval_pixels(object):
             for i in range(len(loader)):
                 probs, gt_train, _, _ = inf.probs_gt_load(i)
                 ent = entropy(probs, axis=0) / np.log(self.dataset.num_eval_classes)
-                import matplotlib.pyplot as plt
+                '''import matplotlib.pyplot as plt
                 
                 plt.imshow(ent)
-                plt.savefig("/home/kumarasw/Thesis/driving_uncertainty/mask.png")
+                plt.savefig("/home/kumarasw/Thesis/driving_uncertainty/mask.png")'''
                 counts["in"] += np.histogram(ent[gt_train == self.dataset.train_id_in], bins=bins, density=False)[0]
                 counts["out"] += np.histogram(ent[gt_train == self.dataset.train_id_out], bins=bins, density=False)[0]
                 print("\rImages Processed: {}/{}".format(i + 1, len(loader)), end=' ')
@@ -89,6 +89,8 @@ class eval_pixels(object):
             self.counts(loader=datloader, save_path=load_path)
         data = pickle.load(open(load_path, "rb"))
         fpr, tpr, _, auroc = calc_sensitivity_specificity(data, balance=True)
+        for i in range(len(fpr)):
+            print("FPR: ", fpr[i], " , TPR: ", tpr[i], " , Threshold: ", _[i])
         fpr95 = fpr[(np.abs(tpr - 0.95)).argmin()]
         threshold = _[(np.abs(tpr - 0.95)).argmin()]
 

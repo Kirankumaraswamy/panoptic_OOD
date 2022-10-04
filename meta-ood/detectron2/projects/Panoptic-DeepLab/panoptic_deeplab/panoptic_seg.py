@@ -158,11 +158,21 @@ class PanopticDeepLab(nn.Module):
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
 
-            softmax_out = r.detach().cpu().numpy()
+            softmax_out = F.softmax(r)
+            softmax_out = softmax_out.detach().cpu().numpy()
             sem_out = r.argmax(dim=0).cpu().numpy()
-            # sem_out = F.softmax(output[0]['sem_seg'], 0)
-            ent = entropy(softmax_out, axis=0) / np.log(19)
-            sem_out[np.where(ent > 0.5)] = 19
+
+            if hasattr(self, "max_softmax") and self.max_softmax:
+                # for max softmax
+                max_sem_out = np.max(softmax_out, axis=0)
+                sem_out[np.where(max_sem_out < 0.3)] = 19
+                anamoly_score = max_sem_out
+            else:
+                # for entropy baseline
+                ent = entropy(softmax_out, axis=0) / np.log(19)
+                sem_out[np.where(ent > 0.5)] = 19
+                anamoly_score = ent
+
             sem_out = torch.tensor(sem_out)
             sem_out = sem_out.unsqueeze(dim=0)
             c = c.cpu()
@@ -182,7 +192,9 @@ class PanopticDeepLab(nn.Module):
                 top_k=self.top_k,
             )
             # For semantic segmentation evaluation.
-            processed_results.append({"sem_seg": r})
+            processed_results.append({"sem_seg": torch.squeeze(sem_out)})
+            processed_results[0]["sem_score"] = r
+            processed_results[0]["anomaly_score"] = torch.tensor(anamoly_score)
             panoptic_image = panoptic_image.squeeze(0)
             semantic_prob = F.softmax(r, dim=0)
             # For panoptic segmentation evaluation.

@@ -20,35 +20,39 @@ from scipy.stats import entropy
 import numpy as np
 
 class AnomalyDetector():
-    def __init__(self, model=None, dataset=None, transform=None):
+    def __init__(self, model=None, dataset=None, transform=None, model_name=None):
         self.network = model
         self.dataset = dataset
         self.transform = transform
+        self.model_name = model_name
 
     def estimator_worker(self, image):
-        output = self.network(torch.unsqueeze(image[0]["image"], dim=0))
-        #output = self.network(image)
-        softmax_out = F.softmax(output[0]['sem_seg'])
+        image = self.preprocess_image(image)
+        output = self.network(image)
+
+        # evaluation for DeepLab only. Panoptic deeplab sends the data already in right format
+        if not "anomaly_score" in output[0].keys():
+            softmax_out = F.softmax(output[0]['sem_seg'])
+            softmax_out = softmax_out.detach().cpu().numpy()
+            sem_out = output[0]["sem_seg"].argmax(dim=0).cpu().numpy()
+            ent = entropy(softmax_out, axis=0) / np.log(19)
+            sem_out[np.where(ent > 0.5)] = 19
+            output[0]['anomaly_score'] = torch.tensor(ent)
+            output[0]["sem_seg"] = torch.tensor(sem_out)
+
+        '''softmax_out = F.softmax(output[0]['sem_seg'])
         softmax_out = softmax_out.detach().cpu().numpy()
         sem_out = output[0]["sem_seg"].argmax(dim=0).cpu().numpy()
         #sem_out = F.softmax(output[0]['sem_seg'], 0)
         ent = entropy(softmax_out, axis=0) / np.log(19)
-        sem_out[np.where(ent > 0.5)] = 19
-
-        output[0]['sem_seg'] = torch.tensor(sem_out)
-
-        import matplotlib.pyplot as plt
-        plt.imshow(sem_out)
-        plt.savefig("/home/kumarasw/kiran/segment.png")
-
-
-        plt.imshow(torch.permute(image[0]["image"], (1, 2, 0)).numpy())
-        plt.savefig("/home/kumarasw/kiran/image.png")
-        plt.imshow(ent)
-        plt.savefig("/home/kumarasw/kiran/mask.png")
-
-
+        output[0]['anomaly_score'] = torch.tensor(ent)'''
         return output
+
+    def preprocess_image(self, x):
+
+        if self.model_name == "DeepLabV3+_WideResNet38":
+            x = torch.unsqueeze(x[0]["image"], dim=0)
+        return x
 
 def panoptic_deep_lab_collate(batch):
     data = [item for item in batch]
@@ -69,27 +73,29 @@ def evaluate(args):
 
     add_panoptic_deeplab_config(cfg)
     
-    '''cfg.merge_from_file("/home/kumarasw/Thesis/meta-ood/src/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024.yaml")
+    cfg.merge_from_file("/home/kumarasw/Thesis/meta-ood/src/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024.yaml")
     model_name = "Detectron_Panoptic_DeepLab"    
-    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"'''
+    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
 
     '''model_name = "Detectron_DeepLab"
     cfg.merge_from_file("/home/kumarasw/Thesis/meta-ood/src/config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml")
     init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/Detectron_DeepLab_epoch_4_alpha_0.9.pth"'''
 
-    model_name = "DeepLabV3+_WideResNet38"
-    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/Detectron_DeepLab_epoch_4_alpha_0.9.pth"
+    '''model_name = "DeepLabV3+_WideResNet38"
+    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/DeepLabV3+_WideResNet38_epoch_4_alpha_0.9.pth"'''
     
     """Initialize model"""
     if start_epoch == 0:
         network = load_network(model_name=model_name, num_classes=19,
                                ckpt_path=init_ckpt, train=False, cfg=cfg)
 
-    
+    # parameter to evaluate OOD using max softmax value
+    #network.max_softmax = True
+
     transform = Compose([ToTensor(), Normalize(CityscapesOOD.mean, CityscapesOOD.std)]) 
     #ds = data_load(root="/export/kiran/cityscapes/", split="val", transform=transform)/home/kumarasw/kiran/cityscapes_coco/cityscapes_val_coco_val
     ds = data_load(root="/home/kumarasw/OOD_dataset/filtered_OOD_dataset/cityscapes_ood", split="val", transform=transform)
-    detector = AnomalyDetector(network, ds, transform)
+    detector = AnomalyDetector(network, ds, transform, model_name)
     result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds, collate_fn=panoptic_deep_lab_collate, semantic_only=True)
     print("====================================================")
     print(result)

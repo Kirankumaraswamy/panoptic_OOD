@@ -72,6 +72,7 @@ def prediction(net, image):
     if not isinstance(image, list):
         image = image.cuda()
     net.eval()
+    print(image.size())
     with torch.no_grad():
         out = net(image)
     if isinstance(out, tuple):
