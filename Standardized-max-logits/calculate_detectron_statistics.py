@@ -220,11 +220,12 @@ def main():
 
     train_loader, val_loaders, train_obj, extra_val_loaders = datasets.setup_loaders(args)
 
-    ckpt_path = "/home/kumarasw/Thesis/Standardized-max-logits/pretrained/deeplab_model_final_a8a355.pkl"
-    model_name = "Detectron_DeepLab"
+    #ckpt_path = "./pretrained/deeplab_model_final_a8a355.pkl"
+    ckpt_path = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
+    model_name = "Detectron_Panoptic_DeepLab"
     train = False
-    Detectron_PanopticDeepLab_Config = "/home/kumarasw/Thesis/Standardized-max-logits/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
-    Detectron_DeepLab_Config = "/home/kumarasw/Thesis/Standardized-max-logits/config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml"
+    Detectron_PanopticDeepLab_Config = "./config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
+    Detectron_DeepLab_Config = "./config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml"
 
     print("Checkpoint file:", ckpt_path)
     print("Load model:", model_name, end="", flush=True)
@@ -286,9 +287,9 @@ def main():
     # Main Loop
     # for epoch in range(args.start_epoch, args.max_epoch):
     
-    calculate_statistics(train_loader, seg_net)
+    calculate_statistics(train_loader, seg_net, model_name)
 
-def calculate_statistics(train_loader, net):
+def calculate_statistics(train_loader, net, model_name):
     """
     Runs the training loop per epoch
     train_loader: Data loader for train
@@ -315,7 +316,7 @@ def calculate_statistics(train_loader, net):
         with torch.no_grad():
             output = net(input)
             
-        outputs = torch.unsqueeze(output[0]['sem_seg'], dim=0)
+        outputs = torch.unsqueeze(output[0]['sem_score'], dim=0)
 
         '''import matplotlib.pyplot as plt
         plt.imshow(inputs.cpu().permute(1, 2, 0).numpy())
@@ -350,8 +351,8 @@ def calculate_statistics(train_loader, net):
 
             print(f"class mean: {mean_dict}")
             print(f"class var: {var_dict}")
-            np.save(f'/home/kumarasw/Thesis/Standardized-max-logits/stats/{args.dataset[0]}_detectron_mean.npy', mean_dict)
-            np.save(f'/home/kumarasw/Thesis/Standardized-max-logits/stats/{args.dataset[0]}_detectron_var.npy', var_dict)
+            np.save(f'./stats/{args.dataset[0]}_{model_name}_mean.npy', mean_dict)
+            np.save(f'./stats/{args.dataset[0]}_{model_name}_var.npy', var_dict)
 
             return None
 

@@ -149,8 +149,8 @@ def get_net():
     else:
         raise ValueError(f"snapshot argument is not set!")
 
-    class_mean = np.load(f'stats/{args.dataset}_mean.npy', allow_pickle=True)
-    class_var = np.load(f'stats/{args.dataset}_var.npy', allow_pickle=True)
+    class_mean = np.load(f'/home/kumarasw/Thesis/Standardized-max-logits/stats/{args.dataset}_mean.npy', allow_pickle=True)
+    class_var = np.load(f'/home/kumarasw/Thesis/Standardized-max-logits/stats/{args.dataset}_var.npy', allow_pickle=True)
     net.module.set_statistics(mean=class_mean.item(), var=class_var.item())
 
     torch.cuda.empty_cache()
@@ -180,7 +180,6 @@ class AnomalyDetector:
         x = Image.fromarray(x)
         x = standard_transforms.ToTensor()(x)
         x = standard_transforms.Normalize(*mean_std)(x)
-
         x = x.cuda()
 
         if len(x.shape) == 3:

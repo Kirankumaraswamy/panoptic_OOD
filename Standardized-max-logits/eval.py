@@ -219,7 +219,8 @@ if __name__ == '__main__':
             main_out, anomaly_score = net(image)
         del main_out
 
-        anomaly_score_list.append(anomaly_score.cpu().numpy())            
+        anomaly_score_list.append(anomaly_score.cpu().numpy())
+
 
     ood_gts = np.array(ood_gts_list)
     anomaly_scores = np.array(anomaly_score_list)
@@ -240,6 +241,17 @@ if __name__ == '__main__':
     print('Measuring metrics...')
 
     fpr, tpr, _ = roc_curve(val_label, val_out)
+    min = 100
+    tp = 0
+    th = 0
+    for i in range(len(fpr)):
+
+        if tpr[i] >= 0.95 and fpr[i] < min:
+            min = fpr[i]
+            tp = tpr[i]
+            th = _[i]
+
+    print(min, tp, th)
 
     roc_auc = auc(fpr, tpr)
     precision, recall, _ = precision_recall_curve(val_label, val_out)

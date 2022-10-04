@@ -9,4 +9,7 @@ scipy
 torch
 tensorboardX
 torchvision
+tensorflow
 kornia @ git+https://github.com/kornia/kornia@af948c5baddbbe1b4c4f1cde86817a4408fe7167
+git+https://github.com/cocodataset/panopticapi.git
+git+https://github.com/hermannsblum/bdl-benchmark.git

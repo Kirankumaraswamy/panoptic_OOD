@@ -12,6 +12,7 @@ import os
 import torch
 import time
 import numpy as np
+import tensorflow as tf
 
 from config import cfg, assert_and_infer_cfg
 import network
@@ -82,6 +83,7 @@ parser.add_argument('--tb_tag', type=str, default='',
                     help='add tag to tb dir')
 parser.add_argument('--ckpt', type=str, default='logs/ckpt',
                     help='Save Checkpoint Point')
+
 parser.add_argument('--tb_path', type=str, default='logs/tb',
                     help='Save Tensorboard Path')
 parser.add_argument('--syncbn', action='store_true', default=True,
@@ -178,6 +180,13 @@ for k, v in d_ks.items():
 
     print(f'dilation kernel at {k}:\n\n{d_ks[k]}')
 
+# ckpt_path = "/home/kumarasw/Thesis/Standardized-max-logits/pretrained/deeplab_model_final_a8a355.pkl"
+ckpt_path = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
+model_name = "Detectron_Panoptic_DeepLab"
+train = False
+Detectron_PanopticDeepLab_Config = "/home/kumarasw/Thesis/Standardized-max-logits/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
+Detectron_DeepLab_Config = "/home/kumarasw/Thesis/Standardized-max-logits/config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml"
+
 def get_net():
     """
     Main Function
@@ -185,15 +194,9 @@ def get_net():
     # Set up the Arguments, Tensorboard Writer, Dataloader, Loss Fn, Optimizer
     assert_and_infer_cfg(args)
 
-    ckpt_path = "/home/kumarasw/Thesis/Standardized-max-logits/pretrained/deeplab_model_final_a8a355.pkl"
-    model_name = "Detectron_DeepLab"
-    train = False
-    Detectron_PanopticDeepLab_Config = "/home/kumarasw/Thesis/Standardized-max-logits/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
-    Detectron_DeepLab_Config = "/home/kumarasw/Thesis/Standardized-max-logits/config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml"
-
     print("Checkpoint file:", ckpt_path)
     print("Load model:", model_name, end="", flush=True)
-    
+
     if model_name == "Detectron_DeepLab" or model_name == "Detectron_Panoptic_DeepLab":
         cfg = get_cfg()
         if model_name == "Detectron_DeepLab":
@@ -207,7 +210,7 @@ def get_net():
     else:
         print("\nModel is not known")
         exit()
-    
+
     if ckpt_path is not None:
         if model_name == "Detectron_DeepLab" or model_name == "Detectron_Panoptic_DeepLab":
             DetectionCheckpointer(network).resume_or_load(
@@ -373,13 +376,6 @@ class AnomalyDetector:
 
             main_out = torch.unsqueeze(main_out[0]['sem_seg'], dim=0)
 
-            '''import matplotlib.pyplot as plt=
-            plt.imshow(image.cpu().permute(1, 2, 0).numpy())
-            plt.show()
-            plt.savefig("/home/kumarasw/Thesis/Standardized-max-logits/image.png")
-            plt.imshow(torch.squeeze(main_out).detach().cpu().numpy().argmax(axis=0))
-            plt.show()
-            plt.savefig("/home/kumarasw/Thesis/Standardized-max-logits/mask.png")'''
 
             if self.class_mean is None or self.class_var is None:
                 raise Exception("Class mean and var are not set!")
@@ -411,12 +407,15 @@ class AnomalyDetector:
 
 
 if __name__ == '__main__':
+    tf_config = tf.compat.v1.ConfigProto()
+    tf_config.gpu_options.allow_growth = True
+    session = tf.compat.v1.Session(config=tf_config)
 
     mean_std = ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     net = get_net()
 
-    class_mean = np.load(f'/home/kumarasw/Thesis/Standardized-max-logits/stats/{args.dataset}_detectron_mean.npy', allow_pickle=True)
-    class_var = np.load(f'/home/kumarasw/Thesis/Standardized-max-logits/stats/{args.dataset}_detectron_var.npy', allow_pickle=True)
+    class_mean = np.load(f'./stats/{args.dataset}_{model_name}_mean.npy', allow_pickle=True)
+    class_var = np.load(f'./stats/{args.dataset}_{model_name}.npy', allow_pickle=True)
     
     fs = bdlb.load(benchmark="fishyscapes", download_and_prepare=False)
     fs.download_and_prepare('LostAndFound')
