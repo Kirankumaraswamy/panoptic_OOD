@@ -12,7 +12,7 @@ import numpy as np
 class COCO(Dataset):
 
     train_id_in = 255
-    train_id_out = 254
+    train_id_out = 19
     min_image_size = 480
 
     def __init__(self, root: str, split: str = "train", transform: Optional[Callable] = None, shuffle=True,

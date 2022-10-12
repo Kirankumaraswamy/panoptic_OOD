@@ -58,13 +58,20 @@ def main():
 
             # Generate binary segmentation mask
             mask = np.ones((h, w), dtype="uint8") * id_in
+            panoptic_mask = np.zeros(
+                (h, w), dtype=np.int32
+            )
+            semantic_mask = np.zeros(
+                (h, w), dtype=np.uint8
+            )
+
             for j in range(len(annotations)):
                 # here 0 means indistribution and out of distribution instances take values 101, 102, 103...
-                instance_id = 100 + (j+1)
-                #panoptic_mask = np.maximum(tools.annToMask(annotations[j])*(instance_id), mask)
-                #semantic_mask = np.maximum(tools.annToMask(annotations[j])*(id_out), mask)
-                panoptic_mask = tools.annToMask(annotations[j])*(instance_id)
-                semantic_mask = tools.annToMask(annotations[j])*(id_out)
+                instance_id = 1000 * 50 + j
+                panoptic_mask = np.maximum(tools.annToMask(annotations[j])*(instance_id), panoptic_mask)
+                semantic_mask = np.maximum(tools.annToMask(annotations[j])*(id_out), semantic_mask)
+                #panoptic_mask = tools.annToMask(annotations[j])*(instance_id)
+                #semantic_mask = tools.annToMask(annotations[j])*(id_out)
                 area = int(np.sum(panoptic_mask > 0))
                 category_id = id_out
                 id = instance_id
@@ -75,6 +82,7 @@ def main():
                     'id': id,
                     'iscrowd': iscrowd
                 }
+
                 segment_info.append(info)
 
             if panoptic_mask.shape[0] == h and panoptic_mask.shape[1] == w and semantic_mask.shape[0] == h and semantic_mask.shape[1] == w:

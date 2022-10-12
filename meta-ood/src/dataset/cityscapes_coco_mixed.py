@@ -29,8 +29,8 @@ class CityscapesCocoMix(Dataset):
 
         self.cs = Cityscapes(root=cs_root, split=self.cs_split)
         self.coco = COCO(root=coco_root, split=self.coco_split, proxy_size=int(subsampling_factor*len(self.cs)))
-        #self.data_dicts = self.cs.cityscapes_data_dicts + self.coco.coco_data_dicts
-        self.data_dicts = self.cs.cityscapes_data_dicts
+        self.data_dicts = self.cs.cityscapes_data_dicts + self.coco.coco_data_dicts
+        #self.data_dicts = self.coco.coco_data_dicts
         self.train_id_out = self.coco.train_id_out
         self.num_classes = self.cs.num_train_ids
         self.mean = self.cs.mean
@@ -46,8 +46,8 @@ class CityscapesCocoMix(Dataset):
             dataset_names = cfg.DATASETS.TRAIN
             meta = MetadataCatalog.get(dataset_names[0])
             thing_ids = list(meta.thing_dataset_id_to_contiguous_id.values())
-            # 254 is out of distribution object in coco dataset
-            thing_ids.append(254)
+            # 19 is out of distribution object in coco dataset
+            thing_ids.append(19)
             self.panoptic_target_generator = PanopticDeepLabTargetGenerator(
                 ignore_label=meta.ignore_label,
                 thing_ids= thing_ids,
@@ -67,12 +67,12 @@ class CityscapesCocoMix(Dataset):
         if self.cfg != None and self.model is not None:
             if data["dataset"] == "cityscapes":
                 pan_seg_gt = utils.read_image(data["pan_seg_file_name"], "RGB")
+                pan_seg_gt = torch.as_tensor(pan_seg_gt.astype("long")).squeeze().permute(-1, 0, 1)
             else:
-                pan_seg_gt = utils.read_image(data["pan_seg_file_name"], "L")
+                pan_seg_gt = np.asarray(Image.open(data["pan_seg_file_name"]))
+                pan_seg_gt = torch.as_tensor(pan_seg_gt.astype("long")).squeeze()
 
-            pan_seg_gt = torch.as_tensor(pan_seg_gt.astype("long")).squeeze().permute(-1, 0, 1)
-
-            if False and self.transform is not None:
+            if self.transform is not None:
                 #image, pan_seg_gt = self.transform(image, pan_seg_gt)
                 T = Resize(size=(512, 1024), interpolation=InterpolationMode.NEAREST)
                 image = T(image)
@@ -85,9 +85,16 @@ class CityscapesCocoMix(Dataset):
                 targets = self.panoptic_target_generator(pan_seg_gt, data["segments_info"])
             data.update(targets)
             target = targets
-            # we don't use default loss calculation from detectron. To avoid error because of OOD value (254)
+            # we don't use default loss calculation from detectron. To avoid error because of OOD value (19)
             data["sem_seg"] = torch.zeros_like(data["sem_seg"])
             data["image"] = image
+            '''import matplotlib.pyplot as plt
+            plt.imshow(torch.permute(image, (1, 2, 0)).numpy())
+            plt.show()
+            plt.imshow(target["sem_seg"].numpy())
+            plt.show()
+            plt.imshow(target["center"].numpy())
+            plt.show()'''
         elif self.model is not None:
             #sem_seg_gt = Image.open(data["sem_seg_file_name"]).convert('L')
             sem_seg_gt = utils.read_image(data["sem_seg_file_name"], "L").squeeze(2)

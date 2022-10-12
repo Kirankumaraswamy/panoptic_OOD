@@ -54,6 +54,9 @@ def encode_target(target, pareto_alpha, num_classes, ignore_train_ind, ood_ind=2
     :param ood_ind: class label corresponding to OoD class
     :return: one/all hot encoded torch tensor
     """
+
+    target = [item["sem_seg"] for item in target]
+    target = torch.stack(target)
     npy = target.numpy()
     npz = npy.copy()
     npy[np.isin(npy, ood_ind)] = num_classes
@@ -69,7 +72,7 @@ def encode_target(target, pareto_alpha, num_classes, ignore_train_ind, ood_ind=2
 def panoptic_deep_lab_collate(batch):
     data = [item[0] for item in batch]
     target = [item[1] for item in batch]
-    target = torch.stack(target)
+    #target = torch.stack(target)
     return data, target
 
 def training_routine(config):
@@ -146,7 +149,12 @@ def training_routine(config):
             ''' plt.imshow(np.max(torch.squeeze(y[0]).cpu().numpy(), axis=0))
             plt.show()'''
             #l1 = cr_loss(logits, x[0]["sem_seg"].unsqueeze(dim=0).cuda())
-            loss = deep_lab_loss(logits, y, cr_loss)
+            loss_seg = deep_lab_loss(logits, y, cr_loss)
+            loss_center = losses["loss_center"]
+            loss_offset = losses["loss_offset"]
+            
+            loss = loss_seg + loss_center + loss_offset
+            
             #loss1 = cross_entropy(logits, y)
 
             loss.backward()
