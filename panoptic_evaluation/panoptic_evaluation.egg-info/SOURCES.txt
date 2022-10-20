@@ -1,9 +1,0 @@
-setup.py
-panoptic_evaluation/__init__.py
-panoptic_evaluation/cityscapes_ood.py
-panoptic_evaluation/evaluation.py
-panoptic_evaluation.egg-info/PKG-INFO
-panoptic_evaluation.egg-info/SOURCES.txt
-panoptic_evaluation.egg-info/dependency_links.txt
-panoptic_evaluation.egg-info/requires.txt
-panoptic_evaluation.egg-info/top_level.txt
