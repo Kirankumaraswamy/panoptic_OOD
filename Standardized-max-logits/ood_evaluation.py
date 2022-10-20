@@ -39,7 +39,6 @@ def get_net():
     
     print("Checkpoint file:", ckpt_path)
     print("Load model:", model_name, end="", flush=True)
-    print("config file:",  config_file)
 
     if model_name == "Detectron_DeepLab" or model_name == "Detectron_Panoptic_DeepLab":
         cfg = get_cfg()
@@ -54,8 +53,6 @@ def get_net():
     else:
         print("\nModel is not known")
         exit()
-
-    print(cfg)
 
     if ckpt_path is not None:
         if model_name == "Detectron_DeepLab" or model_name == "Detectron_Panoptic_DeepLab":

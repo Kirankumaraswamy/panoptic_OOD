@@ -21,6 +21,8 @@ import numpy as np
 from cityscapesscripts.helpers.labels import trainId2label
 import matplotlib.pyplot as plt
 import ood_config
+from detectron2.modeling import build_model
+from detectron2.checkpoint import DetectionCheckpointer
 
 class AnomalyDetector():
     def __init__(self, model=None, dataset=None, transform=None, model_name=None):
@@ -127,22 +129,34 @@ def evaluate(args):
     cfg = get_cfg()
 
     model_name = ood_config.model_name
-    init_ckpt = ood_config.init_ckpt
+    ckpt_path = ood_config.init_ckpt
     max_softmax = ood_config.max_softmax
     threshold = ood_config.threshold
 
-
-    if model_name == "Detectron_Panoptic_DeepLab":
-        add_panoptic_deeplab_config(cfg)
-        cfg.merge_from_file(ood_config.config_file)
-    elif model_name == "Detectron_DeepLab":
-        add_deeplab_config(cfg)
-        cfg.merge_from_file(ood_config.config_file)
-
     
-    """Initialize model"""
-    network = load_network(model_name=model_name, num_classes=19,
-                               ckpt_path=init_ckpt, train=False, cfg=cfg)
+    print("Checkpoint file:", ckpt_path)
+    print("Load model:", model_name, end="", flush=True)
+
+    if model_name == "Detectron_DeepLab" or model_name == "Detectron_Panoptic_DeepLab":
+        cfg = get_cfg()
+        if model_name == "Detectron_DeepLab":
+            add_deeplab_config(cfg)
+            cfg.merge_from_file(ood_config.config_file)
+        elif model_name == "Detectron_Panoptic_DeepLab":
+            add_panoptic_deeplab_config(cfg)
+            cfg.merge_from_file(ood_config.config_file)
+        network = build_model(cfg)
+        #network = torch.nn.DataParallel(network).cuda()
+        DetectionCheckpointer(network).resume_or_load(
+            ckpt_path, resume=False
+        )
+    else:
+        network = nn.DataParallel(DeepWV3Plus(num_classes))
+        network.load_state_dict(torch.load(ckpt_path)['model'], strict=False)
+
+    network = network.cuda()
+    network.eval()
+
     network.threshold = threshold
 
     # parameter to evaluate OOD using max softmax value

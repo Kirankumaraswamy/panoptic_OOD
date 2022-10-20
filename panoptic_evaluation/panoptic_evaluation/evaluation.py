@@ -35,13 +35,13 @@ from cityscapesscripts.helpers.labels import name2label, id2label, trainId2label
 import cityscapesscripts.evaluation.evalPixelLevelSemanticLabeling as cityscapes_eval
 import cityscapesscripts.helpers.labels as cityscapes_labels
 cityscapes_eval.args.avgClassSize["OOD"] = 3462.4756337644
-#cityscapes_labels.labels.append(cityscapes_labels.Label('OOD', 50, 19, 'OOD', 8, True, False, (255, 255, 255)))
-cityscapes_labels.labels.append(cityscapes_labels.Label('OOD', 50, 255, 'void', 0, False, True, (255, 255, 255)))
+cityscapes_labels.labels.append(cityscapes_labels.Label('OOD', 50, 19, 'OOD', 8, True, False, (255, 255, 255)))
+#cityscapes_labels.labels.append(cityscapes_labels.Label('OOD', 50, 255, 'void', 0, False, True, (255, 255, 255)))
 
 name2label["OOD"] = cityscapes_labels.labels[-1]
 id2label[50] = cityscapes_labels.labels[-1]
-#trainId2label[19] = cityscapes_labels.labels[-1]
-#category2labels["OOD"] = [cityscapes_labels.labels[-1]]
+trainId2label[19] = cityscapes_labels.labels[-1]
+category2labels["OOD"] = [cityscapes_labels.labels[-1]]
 
 
 working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_eval_")
@@ -445,9 +445,6 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
             instance_process(inputs, logits)
         del logits
         torch.cuda.empty_cache()
-
-        if count == 20:
-            break
 
 
     gt_path = evaluation_dataset.root
