@@ -109,7 +109,7 @@ def training_routine(config):
         network = load_network(model_name=roots.model_name, num_classes=dataset.num_classes,
                                ckpt_path=os.path.join(roots.weights_dir, basename), train=True, cfg=cfg)
 
-    transform = Compose([RandomHorizontalFlip(), ToTensor(),
+    transform = Compose([RandomHorizontalFlip(), RandomCrop(params.crop_size), ToTensor(),
                          Normalize(dataset.mean, dataset.std)])
 
     cr_loss = torch.nn.CrossEntropyLoss(ignore_index=255, reduction="none")
@@ -123,6 +123,7 @@ def training_routine(config):
         #dataloader = DataLoader(trainloader, batch_size=params.batch_size, shuffle=True)
         i = 0
         loss = None
+        print("total batch: ", len(dataloader))
         for x, target in dataloader:
             optimizer.zero_grad()
             logits, losses = network(x)
@@ -154,6 +155,7 @@ def training_routine(config):
             loss_offset = losses["loss_offset"]
             
             loss = loss_seg + loss_center + loss_offset
+            print(loss_seg.item(), loss_center.item(), loss_offset.item())
             
             #loss1 = cross_entropy(logits, y)
 

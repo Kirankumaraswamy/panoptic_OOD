@@ -28,7 +28,7 @@ from detectron2.projects.panoptic_deeplab import (
     add_panoptic_deeplab_config
 )
 from detectron2.engine import DefaultTrainer
-
+import ood_config
 # Argument Parser
 parser = argparse.ArgumentParser(description='Semantic Segmentation')
 parser.add_argument('--lr', type=float, default=0.01)
@@ -209,6 +209,12 @@ torch.distributed.init_process_group(backend='nccl',
                                      world_size=args.world_size,
                                      rank=args.local_rank)
 
+model_name = ood_config.model_name
+ckpt_path = ood_config.init_ckpt
+threshold = ood_config.threshold
+config_file = ood_config.config_file
+
+
 def main():
 
     """
@@ -220,12 +226,7 @@ def main():
 
     train_loader, val_loaders, train_obj, extra_val_loaders = datasets.setup_loaders(args)
 
-    #ckpt_path = "./pretrained/deeplab_model_final_a8a355.pkl"
-    ckpt_path = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
-    model_name = "Detectron_Panoptic_DeepLab"
     train = False
-    Detectron_PanopticDeepLab_Config = "./config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
-    Detectron_DeepLab_Config = "./config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml"
 
     print("Checkpoint file:", ckpt_path)
     print("Load model:", model_name, end="", flush=True)
@@ -234,10 +235,10 @@ def main():
         cfg = get_cfg()
         if model_name == "Detectron_DeepLab":
             add_deeplab_config(cfg)
-            cfg.merge_from_file(Detectron_DeepLab_Config)
+            cfg.merge_from_file(config_file)
         elif model_name == "Detectron_Panoptic_DeepLab":
             add_panoptic_deeplab_config(cfg)
-            cfg.merge_from_file(Detectron_PanopticDeepLab_Config)
+            cfg.merge_from_file(config_file)
         model = build_model(cfg)
         #model = torch.nn.DataParallel(model).cuda()
     else:

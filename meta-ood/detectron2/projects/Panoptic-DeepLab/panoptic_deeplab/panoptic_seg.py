@@ -142,8 +142,11 @@ class PanopticDeepLab(nn.Module):
         losses.update(center_losses)
         losses.update(offset_losses)
 
+        result = {}
+        result["sem_seg_results"] = sem_seg_results
+
         if self.training:
-            return losses
+            return result, losses
 
         if self.benchmark_network_speed:
             return []
@@ -164,13 +167,21 @@ class PanopticDeepLab(nn.Module):
 
             if hasattr(self, "max_softmax") and self.max_softmax:
                 # for max softmax
+                if hasattr(self, "threshold"):
+                    threshold = self.threshold
+                else:
+                    threshold = 0
                 max_sem_out = np.max(softmax_out, axis=0)
-                sem_out[np.where(max_sem_out < 0.3)] = 19
+                sem_out[np.where(max_sem_out < threshold)] = 19
                 anamoly_score = max_sem_out
             else:
                 # for entropy baseline
+                if hasattr(self, "threshold"):
+                    threshold = self.threshold
+                else:
+                    threshold = 1
                 ent = entropy(softmax_out, axis=0) / np.log(19)
-                sem_out[np.where(ent > 0.5)] = 19
+                sem_out[np.where(ent > threshold)] = 19
                 anamoly_score = ent
 
             sem_out = torch.tensor(sem_out)
@@ -195,6 +206,8 @@ class PanopticDeepLab(nn.Module):
             processed_results.append({"sem_seg": torch.squeeze(sem_out)})
             processed_results[0]["sem_score"] = r
             processed_results[0]["anomaly_score"] = torch.tensor(anamoly_score)
+            processed_results[0]["centre_score"] = c
+            processed_results[0]["offset_score"] = o
             panoptic_image = panoptic_image.squeeze(0)
             semantic_prob = F.softmax(r, dim=0)
             # For panoptic segmentation evaluation.
@@ -352,7 +365,9 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         """
         y = self.layers(features)
         if self.training:
-            return None, self.losses(y, targets, weights)
+            loss = self.losses(y, targets, weights)
+            y = F.interpolate(y, scale_factor=self.common_stride, mode="bilinear", align_corners=False)
+            return y, loss
         else:
             y = F.interpolate(
                 y, scale_factor=self.common_stride, mode="bilinear", align_corners=False

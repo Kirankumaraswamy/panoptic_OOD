@@ -38,7 +38,9 @@ from panoptic_evaluation.cityscapes_ood import CityscapesOOD
 import torch.nn.functional as F
 import torch.optim as optim
 from torchvision.transforms import Compose, ToTensor, Normalize
-
+from cityscapesscripts.helpers.labels import trainId2label
+import matplotlib.pyplot as plt
+import ood_config
 
 
 
@@ -277,14 +279,6 @@ class AnomalyDetector():
 
         out = [{'anomaly_score': torch.tensor(diss_pred), 'sem_seg': torch.tensor(seg_final)}]
 
-        '''import matplotlib.pyplot as plt
-        plt.imshow(torch.permute(img_tensor, (1, 2, 0)).numpy())
-        plt.show()
-        plt.imshow(out[0]['anomaly_score'].numpy())
-        plt.show()
-        plt.imshow(out[0]['sem_seg'].numpy())
-        plt.show()'''
-
 
         return out
 
@@ -293,22 +287,17 @@ class AnomalyDetector():
         image = input[0]["image"]
         img = Image.fromarray(np.array(image))
         img_tensor = self.img_transform(img)
-        input = [{"image": img_tensor, "height": img_tensor.size()[1], "width": img_tensor.size()[2]}]
+        data = [{"image": img_tensor, "height": img_tensor.size()[1], "width": img_tensor.size()[2]}]
 
         self.img = img
         self.seg_net.synboost = self
 
-        output = self.seg_net(input)
-
-
-        '''import matplotlib.pyplot as plt
-        plt.imshow(torch.permute(img_tensor, (1, 2, 0)).numpy())
-        plt.show()
-        plt.imshow(out[0]['anomaly_score'].numpy())
-        plt.show()
-        plt.imshow(out[0]['sem_seg'].numpy())
-        plt.show()'''
-
+        output = self.seg_net(data)
+        output[0]["sem_seg"] = output[0]["sem_seg"].cpu()
+        output[0]["anomaly_score"] = output[0]["anomaly_score"].cpu()
+        
+        if ood_config.save_results:
+            self.display_results(input, output)
         return output
 
     def synboost_uncertainity(self, seg_softmax_out):
@@ -408,11 +397,70 @@ class AnomalyDetector():
             diss_pred = diss_pred[:, 1, :, :]
         diss_pred = np.array(Image.fromarray(diss_pred.squeeze()).resize((image_og_w, image_og_h)))
 
-        seg_final[np.where(diss_pred > 0.1)] = 19
+        seg_final[np.where(diss_pred > ood_config.threshold)] = 19
 
         out = {'anomaly_score': torch.tensor(diss_pred), 'sem_seg': torch.tensor(seg_final)}
+        
 
         return out
+
+    def display_results(self, image, output):
+
+        image_save_dir = os.path.join(".", "ood_results")
+        if not os.path.exists(image_save_dir):
+            os.makedirs(image_save_dir)
+        image_save_path = os.path.join(image_save_dir, image[0]["image_id"]+".png")
+
+        fig = plt.figure(figsize=(20, 14))
+        rows = 3
+        columns = 3
+        images = []
+        img1 = np.array(image[0]["real_image"])
+
+        img2 = output[0]["sem_score"].argmax(dim=0).detach().cpu().numpy()
+
+        img3 = output[0]["sem_seg"].detach().squeeze().numpy()
+        pan_img = output[0]["panoptic_seg"][0].detach().squeeze().numpy()
+
+        segment_ids = np.unique(pan_img)
+        pan_format = np.zeros(img1.shape, dtype="uint8")
+        for segmentId in segment_ids:
+            if segmentId > 1000:
+                semanticId = segmentId // 1000
+                labelInfo = trainId2label[semanticId]
+                if labelInfo.hasInstances:
+                    mask = np.where(pan_img == segmentId)
+                    color = [segmentId % 256, segmentId // 256, segmentId // 256 // 256]
+                    pan_format[mask] = color
+        img4 = pan_format
+
+
+        img5 = output[0]["anomaly_score"].detach().squeeze().numpy()
+
+        ood_ids = [i for i in segment_ids if i >= 19000]
+        img6 = np.zeros(pan_img.shape)
+        for ood_id in ood_ids:
+            ood_mask = np.where(pan_img == ood_id)
+            instance_count = ood_id % 19000
+            img6[ood_mask] = 1 + instance_count * 10
+
+        img7 = output[0]["centre_score"].detach().squeeze().numpy()
+
+        images.append(img1)
+        images.append(img2)
+        images.append(img3)
+        images.append(img4)
+        images.append(img5)
+        images.append(img6)
+        images.append(img7)
+
+        for i in range(7):
+            fig.add_subplot(rows, columns, i+1)
+            plt.imshow(images[i])
+            plt.axis('off')
+
+        fig.tight_layout()
+        plt.savefig(image_save_path)
 
 
 
@@ -426,23 +474,11 @@ class AnomalyDetector():
         assert_and_infer_cfg(self.opt, train_mode=False)
         self.opt.dataset_cls = cityscapes
 
-        '''# Get Segmentation Net
-        net = network.get_net(self.opt, criterion=None)
-        net = torch.nn.DataParallel(net).cuda()
-        print('Segmentation Net Built.')
-        snapshot = os.path.join(os.getcwd(), os.path.dirname(__file__), self.opt.snapshot)
-        self.seg_net, _ = restore_snapshot(net, optimizer=None, snapshot=snapshot,
-                                           restore_optimizer_bool=False)
-        self.seg_net.eval()
-        print('Segmentation Net Restored.')'''
+        model_name = ood_config.model_name
+        ckpt_path = ood_config.init_ckpt
+        config_file = ood_config.config_file
 
-        ckpt_path = "/home/kumarasw/Thesis/driving_uncertainty/models/image-segmentation/deeplab_model_final_a8a355.pkl"
-        model_name = "Detectron_DeepLab"
-        model_name = "Detectron_Panoptic_DeepLab"
-        ckpt_path = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
         train = False
-        Detectron_PanopticDeepLab_Config = "/home/kumarasw/Thesis/driving_uncertainty/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
-        Detectron_DeepLab_Config = "/home/kumarasw/Thesis/driving_uncertainty/config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml"
 
         print("Checkpoint file:", ckpt_path)
         print("Load model:", model_name, end="", flush=True)
@@ -451,31 +487,34 @@ class AnomalyDetector():
             cfg = get_cfg()
             if model_name == "Detectron_DeepLab":
                 add_deeplab_config(cfg)
-                cfg.merge_from_file(Detectron_DeepLab_Config)
+                cfg.merge_from_file(ood_config.config_file)
             elif model_name == "Detectron_Panoptic_DeepLab":
                 add_panoptic_deeplab_config(cfg)
-                cfg.merge_from_file(Detectron_PanopticDeepLab_Config)
+                cfg.merge_from_file(ood_config.config_file)
             network = build_model(cfg)
             #network = torch.nn.DataParallel(network).cuda()
-        else:
-            print("\nModel is not known")
-            exit()
-
-        if ckpt_path is not None:
-            if model_name == "Detectron_DeepLab" or model_name == "Detectron_Panoptic_DeepLab":
-                DetectionCheckpointer(network).resume_or_load(
-                    ckpt_path, resume=False
-                )
+            DetectionCheckpointer(network).resume_or_load(
+                ckpt_path, resume=False
+            )
+            self.seg_net = network.cuda()
+            if train:
+                print("... ok")
+                self.seg_net.train()
             else:
-                #network.load_state_dict(torch.load(ckpt_path)['state_dict'], strict=False)
-                network.load_state_dict(torch.load(ckpt_path)['model'], strict=False)
-        self.seg_net = network.cuda()
-        if train:
-            print("... ok")
-            self.seg_net.train()
+                print("... ok")
+                self.seg_net.eval()
+
+
         else:
-            print("... ok")
+            # Get Segmentation Net
+            net = network.get_net(self.opt, criterion=None)
+            net = torch.nn.DataParallel(net).cuda()
+            print('Segmentation Net Built.')
+            snapshot = os.path.join(os.getcwd(), os.path.dirname(__file__), self.opt.snapshot)
+            self.seg_net, _ = restore_snapshot(net, optimizer=None, snapshot=snapshot,
+                                               restore_optimizer_bool=False)
             self.seg_net.eval()
+            print('Segmentation Net Restored.')
 
     def get_synthesis(self):
         # Get Synthesis Net
@@ -561,10 +600,10 @@ def panoptic_deep_lab_collate(batch):
 if __name__ == '__main__':
     transform = None
     # ds = data_load(root="/export/kiran/cityscapes/", split="val", transform=transform)/home/kumarasw/kiran/cityscapes_coco/cityscapes_val_coco_val
-    ds = data_load(root="/home/kumarasw/OOD_dataset/filtered_OOD_dataset/cityscapes_ood", split="val",
+    ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split,
                    transform=transform)
     detector = AnomalyDetector(True)
     result = data_evaluate(estimator=detector.detectron_estimator_worker, evaluation_dataset=ds,
-                           collate_fn=panoptic_deep_lab_collate, semantic_only=True)
+                           collate_fn=panoptic_deep_lab_collate, semantic_only=False)
     print("====================================================")
     print(result)

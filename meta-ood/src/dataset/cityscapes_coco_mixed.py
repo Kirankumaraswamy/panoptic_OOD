@@ -7,9 +7,10 @@ from src.dataset.cityscapes import Cityscapes
 from detectron2.projects.panoptic_deeplab.target_generator import PanopticDeepLabTargetGenerator
 from detectron2.data import MetadataCatalog
 from panopticapi.utils import rgb2id
-from torchvision.transforms import Resize
+from torchvision.transforms import Resize, RandomCrop
 from torchvision.transforms.functional import InterpolationMode
 from detectron2.data import detection_utils as utils
+import torchvision.transforms.functional as TF
 
 
 class CityscapesCocoMix(Dataset):
@@ -74,11 +75,18 @@ class CityscapesCocoMix(Dataset):
 
             if self.transform is not None:
                 #image, pan_seg_gt = self.transform(image, pan_seg_gt)
-                T = Resize(size=(512, 1024), interpolation=InterpolationMode.NEAREST)
-                image = T(image)
-                pan_seg_gt = T(torch.unsqueeze(pan_seg_gt, dim=0))
-                pan_seg_gt = torch.squeeze(pan_seg_gt)
-                # Generates training targets for Panoptic-DeepLab.
+                c, h, w = image.size()
+                if h <= 720 or w <= 720:
+                    T = Resize(size=(720, 720), interpolation=InterpolationMode.NEAREST)
+                    image = T(image)
+                    pan_seg_gt = T(torch.unsqueeze(pan_seg_gt, dim=0))
+                    pan_seg_gt = torch.squeeze(pan_seg_gt)
+
+                i, j, h, w = RandomCrop.get_params(
+                    image, output_size=(720, 720))
+                image = TF.crop(image, i, j, h, w)
+                pan_seg_gt = TF.crop(pan_seg_gt, i, j, h, w)
+
             if data["dataset"] == "cityscapes":
                 targets = self.panoptic_target_generator(rgb2id(pan_seg_gt.permute(1, 2, 0).numpy()), data["segments_info"])
             else:
@@ -101,7 +109,7 @@ class CityscapesCocoMix(Dataset):
             sem_seg_gt = torch.as_tensor(sem_seg_gt.astype("long"))
             if self.transform is not None:
                 #image, sem_seg_gt = self.transform(image, sem_seg_gt)
-                T = Resize(size=(512, 1024), interpolation=InterpolationMode.NEAREST)
+                T = Resize(size=(720, 720), interpolation=InterpolationMode.NEAREST)
                 image = T(image)
                 sem_seg_gt = T(torch.unsqueeze(sem_seg_gt, dim=0))
                 sem_seg_gt = torch.squeeze(sem_seg_gt)            
