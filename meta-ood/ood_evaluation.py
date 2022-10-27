@@ -73,6 +73,9 @@ class AnomalyDetector():
         img2 = output[0]["sem_seg"].detach().squeeze().numpy()
 
         img3 = output[0]["sem_seg_ood"].detach().squeeze().numpy()
+
+        img4 = output[0]["anomaly_score"].detach().squeeze().numpy()
+
         pan_img = output[0]["panoptic_seg"][0].detach().squeeze().numpy()
 
         segment_ids = np.unique(pan_img)
@@ -85,19 +88,9 @@ class AnomalyDetector():
                     mask = np.where(pan_img == segmentId)
                     color = [segmentId % 256, segmentId // 256, segmentId // 256 // 256]
                     pan_format[mask] = color
-        img4 = pan_format
+        img5 = pan_format
 
-
-        img5 = output[0]["anomaly_score"].detach().squeeze().numpy()
-
-        ood_ids = [i for i in segment_ids if i >= 19000]
-        img6 = np.zeros(pan_img.shape)
-        for ood_id in ood_ids:
-            ood_mask = np.where(pan_img == ood_id)
-            instance_count = ood_id % 19000
-            img6[ood_mask] = 1 + instance_count * 10
-
-        img7 = output[0]["centre_score"].detach().squeeze().numpy()
+        img6 = output[0]["centre_score"].detach().squeeze().numpy()
 
         pan_img_ood = output[0]["panoptic_seg_ood"][0].detach().squeeze().numpy()
 
@@ -111,7 +104,15 @@ class AnomalyDetector():
                     mask = np.where(pan_img_ood == segmentId)
                     color = [segmentId % 256, segmentId // 256, segmentId // 256 // 256]
                     pan_format_ood[mask] = color
-        img8 = pan_format_ood
+        img7 = pan_format_ood
+
+
+        ood_ids = [i for i in segment_ids if i >= 19000]
+        img8 = np.zeros(pan_img.shape)
+        for ood_id in ood_ids:
+            ood_mask = np.where(pan_img_ood == ood_id)
+            instance_count = ood_id % 19000
+            img8[ood_mask] = 1 + instance_count * 10
 
         images.append(img1)
         images.append(img2)
