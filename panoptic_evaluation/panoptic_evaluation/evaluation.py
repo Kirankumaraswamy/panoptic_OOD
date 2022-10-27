@@ -234,8 +234,8 @@ def sematic_evaluate(gt_data_path):
             mask[np.logical_and(gts == id, preds == id)] = 0
             in_pixel_count += np.sum(gts == id)
 
-    print("Total indistribution pixels for evaluation: ", in_pixel_count)
-    print("Total no of indistribution TP pixels considered: ", np.sum(mask == 0))
+    print("Total in-distribution pixels for evaluation: ", in_pixel_count)
+    print("Total no of in-distribution TP pixels considered: ", np.sum(mask == 0))
     print("Total no of OOD pixels considered: ", np.sum(mask == 1))
 
     ood_pred_in = ood_preds[np.where(mask == 0)]
@@ -254,6 +254,9 @@ def sematic_evaluate(gt_data_path):
     FP = np.sum(in_pred == 1)
     FN = np.sum(out_pred == 0)
     TN = np.sum(in_pred == 0)
+
+    print("Total number of in distribution pixels identified correctly: ", TN)
+    print("Total number of Out distribution pixels identified correctly: ", TP)
 
     recall = TP / (TP + FN)
     precision = TP / (TP + FP)
@@ -670,7 +673,7 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
         del logits
         torch.cuda.empty_cache()
 
-        if count == 10:
+        if count == 1:
             break
 
     gt_path = evaluation_dataset.root
