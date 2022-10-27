@@ -6,7 +6,7 @@ import shutil
 import json
 import numpy as np
 
-sampled_image_count = 6
+sampled_image_count = 9
 
 def display_to_filter_images(args):
     cityscapesOODFolder = args.cityscapesOODFolder
@@ -73,7 +73,7 @@ def display_to_filter_images(args):
     # get IDs of instances to be filtered out
     non_filtered_list = list(set(cityscapes_image_ids) - set(saved_instances_list))
 
-    key_to_image_map = {"49": 0, "50": 1, "51": 2, "52":3, "53": 4, "54": 5}
+    key_to_image_map = {"49": 0, "50": 1, "51": 2, "52":3, "53": 4, "54": 5, "55": 6, "56":7, "57":8}
 
     print("Images to filter: ", len(non_filtered_list))
     while len(non_filtered_list) > 0:
@@ -94,9 +94,10 @@ def display_to_filter_images(args):
 
         horizontal_1 = np.concatenate((sampled_images[0], sampled_images[1], sampled_images[2]), axis=1)
         horizontal_2 = np.concatenate((sampled_images[3], sampled_images[4], sampled_images[5]), axis=1)
-        verticle = np.concatenate((horizontal_1, horizontal_2), axis=0)
+        horizontal_3 = np.concatenate((sampled_images[6], sampled_images[7], sampled_images[8]), axis=1)
+        verticle = np.concatenate((horizontal_1, horizontal_2, horizontal_3), axis=0)
 
-        cv2.imshow("Image order 1, 2, 3 in the top  and 4, 5, 6 at bottom", verticle)
+        cv2.imshow("Image order 1, 2, 3 in the top  and 4, 5, 6 at middle and 7, 8, 9 at bottom", verticle)
 
         while True:
             k = cv2.waitKey(0) & 0xFF
@@ -154,12 +155,12 @@ def main():
     parser.add_argument("--cityscapes-ood-folder",
                         dest="cityscapesOODFolder",
                         help="path to the Cityscapes OOD sampled instances",
-                        default="/home/kumarasw/kiran/test_cityscapes_ood/cityscapes_ood",
+                        default="/home/kumarasw/OOD_dataset/cityscapes_ood_unseen/cityscapes_ood",
                         type=str)
     parser.add_argument("--filtered-path",
                         dest="filteredPath",
                         help="path to save filters instances",
-                        default="/home/kumarasw/kiran/test_cityscapes_ood",
+                        default="/home/kumarasw/OOD_dataset/cityscapes_ood_unseen",
                         type=str)
     parser.add_argument("--cityscapes-split",
                         dest="cityscapesSplit",

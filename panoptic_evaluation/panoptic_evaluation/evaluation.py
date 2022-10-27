@@ -1,4 +1,6 @@
 import argparse
+import math
+
 from panoptic_evaluation.cityscapes_ood import CityscapesOOD
 import argparse
 import time
@@ -25,7 +27,8 @@ import tempfile
 from collections import OrderedDict
 from tabulate import tabulate
 import fnmatch
-from sklearn.metrics import roc_auc_score, roc_curve, auc, precision_recall_curve, average_precision_score
+from sklearn.metrics import roc_auc_score, roc_curve, auc, precision_recall_curve, average_precision_score, f1_score, \
+    precision_score, recall_score
 
 from cityscapesscripts.helpers.labels import name2label, id2label, trainId2label, category2labels
 
@@ -34,14 +37,15 @@ from cityscapesscripts.helpers.labels import name2label, id2label, trainId2label
 
 import cityscapesscripts.evaluation.evalPixelLevelSemanticLabeling as cityscapes_eval
 import cityscapesscripts.helpers.labels as cityscapes_labels
-cityscapes_eval.args.avgClassSize["OOD"] = 3462.4756337644
-cityscapes_labels.labels.append(cityscapes_labels.Label('OOD', 50, 19, 'OOD', 8, True, False, (255, 255, 255)))
-#cityscapes_labels.labels.append(cityscapes_labels.Label('OOD', 50, 255, 'void', 0, False, True, (255, 255, 255)))
+
+# cityscapes_eval.args.avgClassSize["OOD"] = 3462.4756337644
+# cityscapes_labels.labels.append(cityscapes_labels.Label('OOD', 50, 19, 'OOD', 8, True, False, (255, 255, 255)))
+cityscapes_labels.labels.append(cityscapes_labels.Label('OOD', 50, 19, 'void', 0, False, True, (255, 255, 255)))
 
 name2label["OOD"] = cityscapes_labels.labels[-1]
 id2label[50] = cityscapes_labels.labels[-1]
 trainId2label[19] = cityscapes_labels.labels[-1]
-category2labels["OOD"] = [cityscapes_labels.labels[-1]]
+# category2labels["OOD"] = [cityscapes_labels.labels[-1]]
 
 
 working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_eval_")
@@ -64,31 +68,41 @@ for label in labels:
     if isthing:
         thing_dataset_id_to_contiguous_id[int(label.id)] = int(label.trainId)
     cityscapes_categories.append({'id': int(label.trainId) if useTrainId else int(label.id),
-                       'name': label.name,
-                       'color': label.color,
-                       'supercategory': label.category,
-                       'isthing': isthing})
+                                  'name': label.name,
+                                  'color': label.color,
+                                  'supercategory': label.category,
+                                  'isthing': isthing})
 
 
 def semantic_process(inputs, outputs):
     for i in range(len(outputs)):
         input = inputs[i]
-        output = outputs[i]
+        out = outputs[i]
         file_name = input["file_name"]
         basename = os.path.splitext(os.path.basename(file_name))[0]
         pred_filename = os.path.join(working_dir.name, basename + "_pred.png")
+        pred_filename_ood = os.path.join(working_dir.name, basename + "_pred_ood.png")
 
-        #output["sem_seg"].argmax(dim=0).cpu().numpy()
-        output = output["sem_seg"].numpy()
-        pred = 255 * np.ones(output.shape, dtype=np.uint8)
+        # output["sem_seg"].argmax(dim=0).cpu().numpy()
+        output = out["sem_seg"].numpy()
+        if "sem_seg_ood" in out.keys():
+            output_ood = out["sem_seg_ood"].numpy()
+        else:
+            output_ood = []
+        # zero is unlabelled in non training IDs
+        pred = np.zeros(output.shape, dtype=np.uint8)
+        pred_ood = np.zeros(output_ood.shape, dtype=np.uint8)
         for train_id, label in trainId2label.items():
-            if label.ignoreInEval:
+            if label.ignoreInEval and not label.name == "OOD":
                 continue
             pred[output == train_id] = label.id
+            pred_ood[output_ood == train_id] = label.id
         Image.fromarray(pred).save(pred_filename)
+        Image.fromarray(pred_ood).save(pred_filename_ood)
         del output
     del outputs
     torch.cuda.empty_cache()
+
 
 def anomaly_process(inputs, outputs):
     for i in range(len(outputs)):
@@ -98,13 +112,14 @@ def anomaly_process(inputs, outputs):
         basename = os.path.splitext(os.path.basename(file_name))[0]
         pred_filename = os.path.join(anomaly_working_dir.name, basename + "_pred")
 
-        #output["sem_seg"].argmax(dim=0).cpu().numpy()
+        # output["sem_seg"].argmax(dim=0).cpu().numpy()
         output = output["anomaly_score"].numpy()
 
         np.save(pred_filename, output)
         del output
     del outputs
     torch.cuda.empty_cache()
+
 
 def instance_process(inputs, outputs):
     for i in range(len(outputs)):
@@ -140,8 +155,8 @@ def instance_process(inputs, outputs):
     del outputs
     torch.cuda.empty_cache()
 
-def sematic_evaluate(gt_data_path):
 
+def sematic_evaluate(gt_data_path):
     print("Evaluating results under {} ...".format(working_dir.name))
 
     # set some global states in cityscapes evaluation API, before evaluating
@@ -172,14 +187,116 @@ def sematic_evaluate(gt_data_path):
     results = cityscapes_eval.evaluateImgLists(
         predictionImgList, gtImgList, cityscapes_eval.args
     )
+
+    gt_list = []
+    pred_list = []
+    ood_pred_list = []
+    # Evaluate all pairs of images and save them into a matrix
+    for i in range(len(predictionImgList)):
+        predictionImgFileName = predictionImgList[i]
+        groundTruthImgFileName = gtImgList[i]
+        predictionImgOODFileName = predictionImgList[i].split("_pred")[0] + "_pred_ood" + \
+                                   predictionImgList[i].split("_pred")[1]
+
+        try:
+            predictionImg = Image.open(predictionImgFileName)
+            predictionNp = np.array(predictionImg)
+        except:
+            printError("Unable to load " + predictionImgFileName)
+        try:
+            groundTruthImg = Image.open(groundTruthImgFileName)
+            groundTruthNp = np.array(groundTruthImg)
+        except:
+            printError("Unable to load " + groundTruthImgFileName)
+        try:
+            predictionImgOOD = Image.open(predictionImgOODFileName)
+            predictionNpOOD = np.array(predictionImgOOD)
+        except:
+            printError("Unable to load " + predictionImgOODFileName)
+
+        gt_list.append(np.expand_dims(groundTruthNp, 0))
+        pred_list.append(np.expand_dims(predictionNp, 0))
+        ood_pred_list.append(np.expand_dims(predictionNpOOD, 0))
+
+    gts = np.array(gt_list)
+    preds = np.array(pred_list)
+    ood_preds = np.array(ood_pred_list)
+
+    mask = 255 * np.ones(gts.shape, dtype=np.uint8)
+    in_pixel_count = 0
+    for id, label in id2label.items():
+        if label.ignoreInEval and not label.name == "OOD":
+            continue
+        if label.name == "OOD":
+            mask[gts == id] = 1
+        else:
+            # consider only True positives from the model prediction
+            mask[np.logical_and(gts == id, preds == id)] = 0
+            in_pixel_count += np.sum(gts == id)
+
+    print("Total indistribution pixels for evaluation: ", in_pixel_count)
+    print("Total no of indistribution TP pixels considered: ", np.sum(mask == 0))
+    print("Total no of OOD pixels considered: ", np.sum(mask == 1))
+
+    ood_pred_in = ood_preds[np.where(mask == 0)]
+    ood_pred_out = ood_preds[np.where(mask == 1)]
+
+    in_pred = np.zeros(len(ood_pred_in))
+    out_pred = np.ones(len(ood_pred_out))
+
+    in_pred[np.where(ood_pred_in == 50)] = 1
+    out_pred[np.where(ood_pred_out != 50)] = 0
+
+    in_gt = np.zeros(len(in_pred))
+    out_gt = np.ones(len(out_pred))
+
+    TP = np.sum(out_pred == 1)
+    FP = np.sum(in_pred == 1)
+    FN = np.sum(out_pred == 0)
+    TN = np.sum(in_pred == 0)
+
+    recall = TP / (TP + FN)
+    precision = TP / (TP + FP)
+    f1score = 2 * (precision * recall) / (precision + recall)
+
+    sensitivity = TP / (TP + FN)
+    specificity = TN / (TN + FP)
+    gmean = math.sqrt(sensitivity * specificity)
+
+    performance_without_uncertainty = len(ood_pred_in) / (len(ood_pred_in) + len(out_pred))
+    performance_with_uncertainty = (TP + TN) / (len(ood_pred_in) + len(out_pred))
+
+    print("------------------------------------------")
+    print("          OOD semantic results ")
+    print("------------------------------------------")
+    print("UF1                              : ", f1score)
+    print("UPrecision                       : ", precision)
+    print("URecall                          : ", recall)
+    print("USensitivity                     : ", sensitivity)
+    print("USpecificity                     : ", specificity)
+    print("UGmean                           : ", gmean)
+    print("Performance with Uncertainity    : ", performance_with_uncertainty)
+    print("Performance without Uncertainity : ", performance_without_uncertainty)
+    print("------------------------------------------")
+
+
     ret = OrderedDict()
     ret["sem_seg"] = {
         "IoU": 100.0 * results["averageScoreClasses"],
         "iIoU": 100.0 * results["averageScoreInstClasses"],
         "IoU_sup": 100.0 * results["averageScoreCategories"],
         "iIoU_sup": 100.0 * results["averageScoreInstCategories"],
+        "uF1": f1score,
+        "uPrecision": precision,
+        "uRecall": recall,
+        "uSensitivity": sensitivity,
+        "uSpecificity": specificity,
+        "uGmean": gmean,
+        "performance_with_uncertainity": performance_with_uncertainty,
+        "performance_without_uncertainity": performance_without_uncertainty,
     }
     return ret
+
 
 def instance_evaluate(gt_data_path):
     print("Evaluating results under {} ...".format(instance_working_dir.name))
@@ -216,8 +333,8 @@ def instance_evaluate(gt_data_path):
     ret["segm"] = {"AP": results["allAp"] * 100, "AP50": results["allAp50%"] * 100}
     return ret
 
-def anomaly_evaluate(gt_data_path):
 
+def anomaly_evaluate(gt_data_path):
     print("Evaluating anomaly results under {} ...".format(anomaly_working_dir.name))
 
     # set some global states in cityscapes evaluation API, before evaluating
@@ -247,7 +364,7 @@ def anomaly_evaluate(gt_data_path):
         city_name = pattern[0]
         sequence_nb = pattern[1]
         frame_nb = pattern[2]
-        filePattern = "{}_{}_{}*.npy".format( city_name , sequence_nb, frame_nb )
+        filePattern = "{}_{}_{}*.npy".format(city_name, sequence_nb, frame_nb)
         for root, filenames in predictionWalk:
             for filename in fnmatch.filter(filenames, filePattern):
                 if not predictionFile:
@@ -268,7 +385,7 @@ def anomaly_evaluate(gt_data_path):
 
     mask = 255 * np.ones(ood_gts.shape, dtype=np.uint8)
     for id, label in id2label.items():
-        if label.ignoreInEval:
+        if label.ignoreInEval and not label.name == "OOD":
             continue
         if label.name == "OOD":
             mask[ood_gts == id] = 1
@@ -289,36 +406,78 @@ def anomaly_evaluate(gt_data_path):
     val_label = np.concatenate((ind_label, ood_label))
 
     print('Measuring anomaly metrics...')
+    ood_weight = len(ood_out) / (len(ood_out) + len(ind_out))
+    ind_weight = len(ind_out) / (len(ood_out) + len(ind_out))
 
     fpr, tpr, _ = roc_curve(val_label, val_out)
 
     min_fpr = 100
     tp = 0
     th = 0
+    max_th = -99999
+    max_score = -99999
+    max_tpr = -99999
+    max_fpr = -99999
+    max_score = -99999
+    max_score_th = -99999
+    max_score_fpr = -99999
+    max_score_tpr = -99999
+
     for i in range(len(fpr)):
         if tpr[i] >= 0.95 and fpr[i] < min_fpr:
             min_fpr = fpr[i]
             tp = tpr[i]
             th = _[i]
+        if fpr[i] <= 0.05 and tpr[i] > max_tpr:
+            max_tpr = tpr[i]
+            max_th = _[i]
+            max_fpr = fpr[i]
+        score = tpr[i] / fpr[i]
+        if score > max_score:
+            max_score = score
+            max_score_th = _[i]
+            max_score_fpr = fpr[i]
+            max_score_tpr = tpr[i]
+
     roc_auc = auc(fpr, tpr)
     precision, recall, _ = precision_recall_curve(val_label, val_out)
     prc_auc = average_precision_score(val_label, val_out)
 
+    max_area = -1
+    max_threshold = -99999
+    max_precision = -1
+    max_recall = -1
+    for i in range(len(precision)):
+        area = precision[i] * recall[i]
+        if area > max_area:
+            max_area = area
+            max_threshold = _[i]
+            max_precision = precision[i]
+            max_recall = recall[i]
+
     return {
         "FPR@95%TPR": min_fpr,
-        "Threshold": th,
+        "TPR@5%FPR": max_tpr,
+        "Threshold@95%TPR": th,
+        "Threshold@5%FPR": max_th,
         "AP": prc_auc,
-        "auroc": roc_auc
+        "auroc": roc_auc,
+        "PRthreshold": max_threshold,
+        "TPRvsFPRThreshold": max_score_th
     }
 
 
 def panoptic_process(inputs, outputs):
     predictions = []
+    predictions_OOD = []
     for i in range(len(outputs)):
         input = inputs[i]
         output = outputs[i]
         panoptic_img, segments_info = output["panoptic_seg"]
         panoptic_img = panoptic_img.cpu().numpy()
+
+        panoptic_img_ood, segments_info_ood = output["panoptic_seg_ood"]
+        panoptic_img_ood = panoptic_img_ood.cpu().numpy()
 
         if segments_info is None:
             # If "segments_info" is None, we assume "panoptic_img" is a
@@ -357,13 +516,51 @@ def panoptic_process(inputs, outputs):
                 "segments_info": segments_info,
             })
 
+        # for OOD prediction
+        if segments_info_ood is None:
+            # If "segments_info" is None, we assume "panoptic_img" is a
+            # H*W int32 image storing the panoptic_id in the format of
+            # category_id * label_divisor + instance_id. We reserve -1 for
+            # VOID label, and add 1 to panoptic_img since the official
+            # evaluation script uses 0 for VOID label.
+            label_divisor = 1000
+            segments_info_ood = []
+            for panoptic_label in np.unique(panoptic_img_ood):
+                if panoptic_label == -1:
+                    # VOID region.
+                    continue
+                pred_class = panoptic_label // label_divisor
+                isthing = (
+                        pred_class in thing_dataset_id_to_contiguous_id.values()
+                )
+                segments_info_ood.append(
+                    {
+                        "id": int(panoptic_label) + 1,
+                        "category_id": train_id_to_id[int(pred_class)],
+                        "isthing": bool(isthing),
+                    }
+                )
+            # Official evaluation script uses 0 for VOID label.
+            panoptic_img_ood += 1
+
+        file_name = os.path.basename(input["file_name"])
+        file_name_png = os.path.splitext(file_name)[0] + "_ood" + ".png"
+        with io.BytesIO() as out:
+            Image.fromarray(id2rgb(panoptic_img_ood)).save(out, format="PNG")
+            predictions_OOD.append({
+                "image_id": input["image_id"],
+                "file_name": file_name_png,
+                "png_string": out.getvalue(),
+                "segments_info": segments_info_ood,
+            })
+
         del output
     del outputs
     torch.cuda.empty_cache()
-    return predictions
+    return predictions, predictions_OOD
 
-def panoptic_evaluate(predictions, gt_json_path, gt_data_path):
 
+def panoptic_evaluate(predictions, predictions_ood, gt_json_path, gt_data_path):
     # PanopticApi requires local files
     gt_json = gt_json_path
     gt_folder = gt_data_path
@@ -373,10 +570,15 @@ def panoptic_evaluate(predictions, gt_json_path, gt_data_path):
         for p in predictions:
             with open(os.path.join(pred_dir, p["file_name"]), "wb") as f:
                 f.write(p.pop("png_string"))
+        # writing ood data
+        for p in predictions_ood:
+            with open(os.path.join(pred_dir, p["file_name"]), "wb") as f:
+                f.write(p.pop("png_string"))
 
         with open(gt_json, "r") as f:
             json_data = json.load(f)
         json_data["annotations"] = predictions
+        json_data["annotations_ood"] = predictions_ood
 
         output_dir = pred_dir
         predictions_json = os.path.join(output_dir, "predictions.json")
@@ -403,10 +605,20 @@ def panoptic_evaluate(predictions, gt_json_path, gt_data_path):
     res["PQ_st"] = 100 * pq_res["Stuff"]["pq"]
     res["SQ_st"] = 100 * pq_res["Stuff"]["sq"]
     res["RQ_st"] = 100 * pq_res["Stuff"]["rq"]
+    res["UPQ"] = 100 * pq_res["OOD"][0]["upq"]
+    res["USQ"] = 100 * pq_res["OOD"][0]["usq"]
+    res["URQ"] = 100 * pq_res["OOD"][0]["urq"]
+    res["UPQ_in"] = 100 * pq_res["OOD"][1][0]["upq"]
+    res["USQ_in"] = 100 * pq_res["OOD"][1][0]["usq"]
+    res["URQ_in"] = 100 * pq_res["OOD"][1][0]["urq"]
+    res["UPQ_out"] = 100 * pq_res["OOD"][1][1]["upq"]
+    res["USQ_out"] = 100 * pq_res["OOD"][1][1]["usq"]
+    res["URQ_out"] = 100 * pq_res["OOD"][1][1]["urq"]
 
     results = OrderedDict({"panoptic_seg": res})
     print_panoptic_results(pq_res)
     return results
+
 
 def print_panoptic_results(pq_res):
     headers = ["", "PQ", "SQ", "RQ", "#categories"]
@@ -419,17 +631,27 @@ def print_panoptic_results(pq_res):
     )
     print("Panoptic Evaluation Results:\n" + table)
 
+    headers = ["", "UPQ", "USQ", "URQ", "#categories"]
+    ood_data = []
+    ood_data.append(["All"] + [pq_res["OOD"][0][k] * 100 for k in ["upq", "usq", "urq"]] + [2])
+    ood_data.append(["IN_PIXELS"] + [pq_res["OOD"][1][0][k] * 100 for k in ["upq", "usq", "urq"]] + [1])
+    ood_data.append(["OUT_PIXELS"] + [pq_res["OOD"][1][1][k] * 100 for k in ["upq", "usq", "urq"]] + [1])
+    ood_table = tabulate(
+        ood_data, headers=headers, tablefmt="pipe", floatfmt=".3f", stralign="center", numalign="center"
+                         )
+    print("OOD Panoptic Evaluation Results:\n" + ood_table)
 
 
 def data_load(root=None, split="val", transform=None):
-    datset = CityscapesOOD(root, split, transform )
+    datset = CityscapesOOD(root, split, transform)
     return datset
 
-def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate_fn=None, semantic_only=False):
 
+def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate_fn=None, semantic_only=False):
     dataloader = DataLoader(evaluation_dataset, batch_size=batch_size,
-                    collate_fn=collate_fn)
+                            collate_fn=collate_fn)
     predictions = []
+    predictions_ood = []
     has_anomoly = False
     for count, inputs in enumerate(dataloader):
         print("count: ", count)
@@ -441,21 +663,25 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
             has_anomoly = True
 
         if not semantic_only:
-            predictions += panoptic_process(inputs, logits)
+            pred, pred_ood = panoptic_process(inputs, logits)
+            predictions += pred
+            predictions_ood += pred_ood
             instance_process(inputs, logits)
         del logits
         torch.cuda.empty_cache()
 
+        if count == 10:
+            break
 
     gt_path = evaluation_dataset.root
-    semantic_result = sematic_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
-
     result = {}
+
+    semantic_result = sematic_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
     result["semantic_seg"] = semantic_result
 
     if not semantic_only:
-        panoptic_result = panoptic_evaluate(predictions, os.path.join(gt_path, "gtFine",
-                                                                      "cityscapes_panoptic_" + evaluation_dataset.split + ".json"),
+        panoptic_result = panoptic_evaluate(predictions, predictions_ood, os.path.join(gt_path, "gtFine",
+                                                                                       "cityscapes_panoptic_" + evaluation_dataset.split + ".json"),
                                             os.path.join(gt_path, "gtFine",
                                                          "cityscapes_panoptic_" + evaluation_dataset.split))
         instance_result = instance_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
@@ -470,10 +696,10 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
     working_dir.cleanup()
     instance_working_dir.cleanup()
     anomaly_working_dir.cleanup()
-    return  result
+    return result
+
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser(description='OPTIONAL argument setting, see also config.py')
     parser.add_argument("-root", "--ROOT", nargs="?", type=str)
     parser.add_argument("-split", "--SPLIT", nargs="?", type=str)

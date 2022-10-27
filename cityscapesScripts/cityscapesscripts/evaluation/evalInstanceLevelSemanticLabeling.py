@@ -97,9 +97,6 @@ def getPrediction( groundTruthFile , args ):
             else:
                 printError("Found multiple predictions for ground truth {}".format(groundTruthFile))
 
-    if not predictionFile:
-        printError("Found no prediction for ground truth {}".format(groundTruthFile))
-
     return predictionFile
 
 

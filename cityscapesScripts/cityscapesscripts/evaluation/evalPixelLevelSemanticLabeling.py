@@ -89,7 +89,7 @@ def getPrediction( args, groundTruthFile ):
         args.predictionWalk = walk
 
     csFile = getCsFileInfo(groundTruthFile)
-    filePattern = "{}_{}_{}*.png".format( csFile.city , csFile.sequenceNb , csFile.frameNb )
+    filePattern = "{}_{}_{}*_pred.png".format( csFile.city , csFile.sequenceNb , csFile.frameNb )
 
     predictionFile = None
     for root, filenames in args.predictionWalk:
@@ -98,9 +98,6 @@ def getPrediction( args, groundTruthFile ):
                 predictionFile = os.path.join(root, filename)
             else:
                 printError("Found multiple predictions for ground truth {}".format(groundTruthFile))
-
-    if not predictionFile:
-        printError("Found no prediction for ground truth {}".format(groundTruthFile))
 
     return predictionFile
 

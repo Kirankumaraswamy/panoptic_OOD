@@ -40,9 +40,11 @@ class AnomalyDetector():
             softmax_out = F.softmax(output[0]['sem_seg'])
             softmax_out = softmax_out.detach().cpu().numpy()
             sem_out = output[0]["sem_seg"].argmax(dim=0).cpu().numpy()
+            sem_out_ood = sem_out.copy()
             ent = entropy(softmax_out, axis=0) / np.log(19)
-            sem_out[np.where(ent > 0.5)] = 19
+            sem_out_ood[np.where(ent > 0.5)] = 19
             output[0]['anomaly_score'] = torch.tensor(ent)
+            output[0]["sem_seg_ood"] = torch.tensor(sem_out_ood)
             output[0]["sem_seg"] = torch.tensor(sem_out)
        
         if ood_config.save_results:
@@ -68,9 +70,9 @@ class AnomalyDetector():
         images = []
         img1 = np.array(image[0]["real_image"])
 
-        img2 = output[0]["sem_score"].argmax(dim=0).detach().cpu().numpy()
+        img2 = output[0]["sem_seg"].detach().squeeze().numpy()
 
-        img3 = output[0]["sem_seg"].detach().squeeze().numpy()
+        img3 = output[0]["sem_seg_ood"].detach().squeeze().numpy()
         pan_img = output[0]["panoptic_seg"][0].detach().squeeze().numpy()
 
         segment_ids = np.unique(pan_img)
@@ -97,6 +99,20 @@ class AnomalyDetector():
 
         img7 = output[0]["centre_score"].detach().squeeze().numpy()
 
+        pan_img_ood = output[0]["panoptic_seg_ood"][0].detach().squeeze().numpy()
+
+        segment_ids = np.unique(pan_img_ood)
+        pan_format_ood = np.zeros(img1.shape, dtype="uint8")
+        for segmentId in segment_ids:
+            if segmentId > 1000:
+                semanticId = segmentId // 1000
+                labelInfo = trainId2label[semanticId]
+                if labelInfo.hasInstances:
+                    mask = np.where(pan_img_ood == segmentId)
+                    color = [segmentId % 256, segmentId // 256, segmentId // 256 // 256]
+                    pan_format_ood[mask] = color
+        img8 = pan_format_ood
+
         images.append(img1)
         images.append(img2)
         images.append(img3)
@@ -104,8 +120,9 @@ class AnomalyDetector():
         images.append(img5)
         images.append(img6)
         images.append(img7)
+        images.append(img8)
 
-        for i in range(7):
+        for i in range(8):
             fig.add_subplot(rows, columns, i+1)
             plt.imshow(images[i])
             plt.axis('off')

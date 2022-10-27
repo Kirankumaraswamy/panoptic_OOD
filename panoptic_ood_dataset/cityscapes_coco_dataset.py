@@ -20,7 +20,7 @@ from pycocotools.coco import COCO as coco_tools
 import random
 from extract_coco_instances import coco_categories
 
-ood_train_id = 20
+ood_train_id = 19
 ood_id = 50
 
 city_height = 1024
@@ -297,8 +297,12 @@ def create_cityscapes_coco_panoptic(args):
 
     searchFine = os.path.join(cityscapesPath, mode, cityscapesSplit, "*", "*_instanceIds.png")
     # search files
+
     filesFine = glob.glob(searchFine)
-    filesFine.sort()
+    if cityscapesSplit == "val":
+        filesFine.sort(reverse=True)
+    else:
+        filesFine.sort()
 
     cityscapes_files = filesFine
 
@@ -325,6 +329,8 @@ def create_cityscapes_coco_panoptic(args):
     if not os.path.isdir(left8bitImgPath):
         print("Creating folder {} for saving left8bit images ".format(left8bitImgPath))
         os.makedirs(left8bitImgPath, exist_ok=True)
+
+    status_file_name = "status_" + cityscapesSplit + ".txt"
     
 
     # load instance scale json file if exists else create a new one
@@ -406,21 +412,22 @@ def create_cityscapes_coco_panoptic(args):
         with open(scaleOutFile, 'w') as f:
             json.dump(scale_map, f, sort_keys=True, indent=4)
 
-    open(os.path.join(outputFolder, parent_folder, "status.txt"), 'w').close()
+    open(os.path.join(outputFolder, parent_folder, status_file_name), 'w').close()
     
 
     images = []
     annotations = []
     instance_count = 0
-    random.seed(0)
+
     for progress, f in enumerate(cityscapes_files):
+        random.seed(instance_count)
         originalFormat = np.array(Image.open(f))
 
         fileName = os.path.basename(f)
 
         print("\rProgress: {:>3.2f} % , {}".format((progress + 1) * 100 / len(cityscapes_files), fileName), end=' ')
         # to monitor the progress from remote
-        with open(os.path.join(outputFolder, parent_folder, "status.txt"), 'a') as f:
+        with open(os.path.join(outputFolder, parent_folder, status_file_name), 'a') as f:
             f.write("\nProgress: {:>3.2f} % , {}. coco image ID's used -> ".format((progress + 1) * 100 / len(cityscapes_files), fileName))
 
 
@@ -532,12 +539,12 @@ def create_cityscapes_coco_panoptic(args):
 
             for i in range (random_instances):
                 #1370
-                id = coco_img_Ids[1371 % len(coco_img_Ids)]
+                id = coco_img_Ids[(instance_count+coco_image_instance_count) % len(coco_img_Ids)]
 
                 # write content to status file
                 if sample_instance_count == 0:
                     print("coco_image_count = ", (instance_count + coco_image_instance_count))
-                    with open(os.path.join(outputFolder, parent_folder, "status.txt"), 'a') as f:
+                    with open(os.path.join(outputFolder, parent_folder, status_file_name), 'a') as f:
                         f.write("{}, ".format(id))
 
                 instance = coco_json_data[id]
@@ -786,9 +793,6 @@ def create_cityscapes_coco_panoptic(args):
 
         sys.stdout.flush()
 
-        '''if progress == 20:
-            break'''
-
 
     print("\nSaving the json file {}".format(outFile))
     d = {'images': images,
@@ -822,7 +826,7 @@ def main():
     parser.add_argument("--output-folder",
                         dest="outputFolder",
                         help="path to the output folder.",
-                        default="/home/kumarasw/OOD_dataset",
+                        default="/home/kumarasw/kiran",
                         type=str)
     parser.add_argument("--use-train-id", action="store_true", dest="useTrainId")
 
