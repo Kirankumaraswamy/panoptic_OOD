@@ -634,6 +634,13 @@ def print_panoptic_results(pq_res):
                          )
     print("OOD Panoptic Evaluation Results:\n" + ood_table)
 
+    print("Total number of in-distribution instances: ", pq_res["OOD"][1][0]["no_instances"])
+    print("Number of in-distribution instances correctly identified (true positives): ", pq_res["OOD"][1][0]["correct_instances"])
+    print("Number of in-distribution instances wrongly identified (false positives): ", pq_res["OOD"][1][0]["false_instances"])
+    print("Total number of out-distribution instances: ", pq_res["OOD"][1][1]["no_instances"])
+    print("Number of out-distribution instances correctly identified (true positives): ", pq_res["OOD"][1][1]["correct_instances"])
+    print("Number of out-distribution instances wrongly identified (false positives): ", pq_res["OOD"][1][1]["false_instances"])
+
 
 def data_load(root=None, split="val", transform=None):
     datset = CityscapesOOD(root, split, transform)

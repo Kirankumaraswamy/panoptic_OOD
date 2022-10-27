@@ -116,7 +116,7 @@ class UPQStat():
             upq_class = iou / (tp + 0.5 * fp + 0.5 * fn)
             usq_class = iou / tp if tp != 0 else 0
             urq_class = tp / (tp + 0.5 * fp + 0.5 * fn)
-            per_class_results[i] = {'upq': upq_class, 'usq': usq_class, 'urq': urq_class}
+            per_class_results[i] = {'upq': upq_class, 'usq': usq_class, 'urq': urq_class, 'no_instances': (tp+fn), "correct_instances": tp, "false_instances": fp}
             upq += upq_class
             usq += usq_class
             urq += urq_class
