@@ -165,7 +165,7 @@ class PanopticDeepLab(nn.Module):
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
 
-            sem_out = r.argmax(dim=0, keepdim=True)
+            sem_out = r.argmax(dim=0, keepdim=True).cpu()
             anomaly_score = None
 
             if hasattr(self, "synboost"):
