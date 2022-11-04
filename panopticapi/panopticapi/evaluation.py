@@ -125,7 +125,7 @@ class UPQStat():
 
 
 @get_traceback
-def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, categories):
+def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, categories, evaluate_ood):
     pq_stat = PQStat()
     upq_stat = UPQStat()
 
@@ -354,14 +354,11 @@ def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, cate
                 else:
                     upq_stat[1].fp += 1
 
-        else:
-            upq_stat = None
-
     print('Core: {}, all {} images processed'.format(proc_id, len(annotation_set)))
     return (pq_stat, upq_stat)
 
 
-def pq_compute_multi_core(matched_annotations_list, gt_folder, pred_folder, categories):
+def pq_compute_multi_core(matched_annotations_list, gt_folder, pred_folder, categories, evaluate_ood):
     cpu_num = multiprocessing.cpu_count()
     annotations_split = np.array_split(matched_annotations_list, cpu_num)
     print("Number of cores: {}, images per core: {}".format(cpu_num, len(annotations_split[0])))
@@ -369,21 +366,19 @@ def pq_compute_multi_core(matched_annotations_list, gt_folder, pred_folder, cate
     processes = []
     for proc_id, annotation_set in enumerate(annotations_split):
         p = workers.apply_async(pq_compute_single_core,
-                                (proc_id, annotation_set, gt_folder, pred_folder, categories))
+                                (proc_id, annotation_set, gt_folder, pred_folder, categories, evaluate_ood))
         processes.append(p)
     pq_stat = PQStat()
     upq_stat = UPQStat()
     for p in processes:
         pq, upq = p.get()
         pq_stat += pq
-        if upq is not None:
+        if evaluate_ood:
             upq_stat += upq
-        else:
-            upq_stat = None
     return pq_stat, upq_stat
 
 
-def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None):
+def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None, evaluate_ood=False):
     start_time = time.time()
     with open(gt_json_file, 'r') as f:
         gt_json = json.load(f)
@@ -436,7 +431,7 @@ def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None):
     print("{:10s}| {:>5s}  {:>5s}  {:>5s} {:>5s}".format("", "PQ", "SQ", "RQ", "N"))
     print("-" * (10 + 7 * 4))
 
-    if upq_stat is not None:
+    if evaluate_ood:
         upq_result = upq_stat.upq_average()
 
     for name, _isthing in metrics:
@@ -447,7 +442,7 @@ def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None):
             100 * results[name]['rq'],
             results[name]['n'])
         )
-    if upq_stat is not None:
+    if evaluate_ood:
         results["OOD"] = upq_result
     t_delta = time.time() - start_time
     print("Time elapsed: {:0.2f} seconds".format(t_delta))

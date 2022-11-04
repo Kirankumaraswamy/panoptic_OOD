@@ -594,6 +594,7 @@ def panoptic_evaluate(predictions, predictions_ood, gt_json_path, gt_data_path, 
                 predictions_json,
                 gt_folder=gt_folder,
                 pred_folder=pred_dir,
+                evaluate_ood=evaluate_ood
             )
 
     res = {}
@@ -653,7 +654,7 @@ def print_panoptic_results(pq_res):
         print("Number of out-distribution instances wrongly identified (false positives): ", pq_res["OOD"][1][1]["false_instances"])
 
 
-def data_load(root=None, split="val", transform=None):
+def data_load(root=None, split="val", transform=None)
     datset = CityscapesOOD(root, split, transform)
     return datset
 
