@@ -239,31 +239,32 @@ def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, cate
             pq_stat[pred_info['category_id']].fp += 1
             pred_fp_label_id_map[pred_label] = pred_info['category_id']
 
-        pan_pred_ood = np.array(Image.open(os.path.join(pred_folder, pred_ann_ood['file_name'])), dtype=np.uint32)
-        pan_pred_ood = rgb2id(pan_pred_ood)
-        pred_segms_ood = {el['id']: el for el in pred_ann_ood['segments_info']}
-
-        # predicted segments with OOD area calculation + prediction sanity checks
-        pred_labels_set_ood = set(el['id'] for el in pred_ann_ood['segments_info'])
-        labels_ood, labels_cnt_ood = np.unique(pan_pred_ood, return_counts=True)
-        for label_ood, label_cnt_ood in zip(labels_ood, labels_cnt_ood):
-            if label_ood not in pred_segms_ood:
-                if label_ood == VOID:
-                    continue
-                raise KeyError(
-                    'In the image with ID {} segment with ID {} is presented in PNG and not presented in JSON.'.format(
-                        gt_ann['image_id'], label_ood))
-            pred_segms_ood[label_ood]['area'] = label_cnt_ood
-            pred_labels_set_ood.remove(label_ood)
-            if pred_segms_ood[label_ood]['category_id'] not in categories:
-                raise KeyError('In the image with ID {} segment with ID {} has unknown category_id {}.'.format(
-                    gt_ann['image_id'], label_ood, pred_segms_ood[label_ood]['category_id']))
-        if len(pred_labels_set_ood) != 0:
-            raise KeyError(
-                'In the image with ID {} the following segment IDs {} are presented in JSON and not presented in PNG.'.format(
-                    gt_ann['image_id'], list(pred_labels_set_ood)))
 
         if pred_ann_ood is not None:
+            pan_pred_ood = np.array(Image.open(os.path.join(pred_folder, pred_ann_ood['file_name'])), dtype=np.uint32)
+            pan_pred_ood = rgb2id(pan_pred_ood)
+            pred_segms_ood = {el['id']: el for el in pred_ann_ood['segments_info']}
+
+            # predicted segments with OOD area calculation + prediction sanity checks
+            pred_labels_set_ood = set(el['id'] for el in pred_ann_ood['segments_info'])
+            labels_ood, labels_cnt_ood = np.unique(pan_pred_ood, return_counts=True)
+            for label_ood, label_cnt_ood in zip(labels_ood, labels_cnt_ood):
+                if label_ood not in pred_segms_ood:
+                    if label_ood == VOID:
+                        continue
+                    raise KeyError(
+                        'In the image with ID {} segment with ID {} is presented in PNG and not presented in JSON.'.format(
+                            gt_ann['image_id'], label_ood))
+                pred_segms_ood[label_ood]['area'] = label_cnt_ood
+                pred_labels_set_ood.remove(label_ood)
+                if pred_segms_ood[label_ood]['category_id'] not in categories:
+                    raise KeyError('In the image with ID {} segment with ID {} has unknown category_id {}.'.format(
+                        gt_ann['image_id'], label_ood, pred_segms_ood[label_ood]['category_id']))
+            if len(pred_labels_set_ood) != 0:
+                raise KeyError(
+                    'In the image with ID {} the following segment IDs {} are presented in JSON and not presented in PNG.'.format(
+                        gt_ann['image_id'], list(pred_labels_set_ood)))
+
             # for OOD panoptic prediction
             # confusion matrix calculation
             pan_gt_pred_ood = pan_gt.astype(np.uint64) * OFFSET + pan_pred_ood.astype(np.uint64)

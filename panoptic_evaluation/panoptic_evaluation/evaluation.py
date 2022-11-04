@@ -284,14 +284,6 @@ def sematic_evaluate(gt_data_path, evaluate_ood):
         "iIoU": 100.0 * results["averageScoreInstClasses"],
         "IoU_sup": 100.0 * results["averageScoreCategories"],
         "iIoU_sup": 100.0 * results["averageScoreInstCategories"],
-        "uF1": f1score,
-        "uPrecision": precision,
-        "uRecall": recall,
-        "uSensitivity": sensitivity,
-        "uSpecificity": specificity,
-        "uGmean": gmean,
-        "performance_with_uncertainity": performance_with_uncertainty,
-        "performance_without_uncertainity": performance_without_uncertainty,
     }
     if evaluate_ood:
         ret["sem_seg"]["uF1"] = f1score
@@ -685,7 +677,7 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
             pred, pred_ood = panoptic_process(inputs, logits, evaluate_ood)
             predictions += pred
             predictions_ood += pred_ood
-            instance_process(inputs, logits, evaluate_ood)
+            instance_process(inputs, logits)
         del logits
         torch.cuda.empty_cache()
 
@@ -695,7 +687,7 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
     gt_path = evaluation_dataset.root
     result = {}
 
-    semantic_result = sematic_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split, evaluate_ood))
+    semantic_result = sematic_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split), evaluate_ood)
     result["semantic_seg"] = semantic_result
 
     if not semantic_only:
