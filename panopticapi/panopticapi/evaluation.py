@@ -420,7 +420,7 @@ def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None, e
                 matched_annotations_list.append((gt_ann, pred_annotations[image_id], None))
 
 
-    pq_stat, upq_stat = pq_compute_multi_core(matched_annotations_list, gt_folder, pred_folder, categories)
+    pq_stat, upq_stat = pq_compute_multi_core(matched_annotations_list, gt_folder, pred_folder, categories, evaluate_ood)
 
     metrics = [("All", None), ("Things", True), ("Stuff", False)]
     results = {}
