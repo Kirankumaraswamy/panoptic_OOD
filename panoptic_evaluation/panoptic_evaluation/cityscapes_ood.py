@@ -37,15 +37,16 @@ class CityscapesOOD(Dataset):
 
     def __getitem__(self, i):
         data = self.cityscapes_data_dict[i]
-        image = Image.open(data["file_name"]).convert('RGB')
-        real_image = image
-        #image = utils.read_image(data["file_name"])
-        #image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
-        
         if self.transform is not None:
+            image = Image.open(data["file_name"]).convert('RGB')
+            real_image = image
             image = self.transform(image)
-            data["height"] = image.shape[1]
-            data["width"] = image.shape[2]
+        else:
+            image = utils.read_image(data["file_name"])
+            real_image = image
+            image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+        data["height"] = image.shape[1]
+        data["width"] = image.shape[2]
         data["image"] = image
         data["real_image"] = real_image
         return data

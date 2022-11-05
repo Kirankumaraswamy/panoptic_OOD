@@ -38,9 +38,9 @@ from cityscapesscripts.helpers.labels import name2label, id2label, trainId2label
 import cityscapesscripts.evaluation.evalPixelLevelSemanticLabeling as cityscapes_eval
 import cityscapesscripts.helpers.labels as cityscapes_labels
 
-working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_eval_")
-instance_working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_instance_eval_")
-anomaly_working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_anomaly_eval_")
+working_dir = None
+instance_working_dir = None
+anomaly_working_dir = None
 
 cityscapes_categories = []
 useTrainId = False
@@ -73,7 +73,9 @@ def semantic_process(inputs, outputs, evaluate_ood):
         pred_filename = os.path.join(working_dir.name, basename + "_pred.png")
 
         # output["sem_seg"].argmax(dim=0).cpu().numpy()
-        output = out["sem_seg"].numpy()
+        output = out["sem_seg"].detach().cpu().numpy()
+        if len(output.shape) > 2:
+            output = np.argmax(output, axis=0)
 
         # zero is unlabelled in non training IDs
         pred = np.zeros(output.shape, dtype=np.uint8)
@@ -660,11 +662,17 @@ def data_load(root=None, split="val", transform=None):
 
 
 def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate_fn=None, evaluate_ood=True, semantic_only=False):
+    global working_dir, instance_working_dir, anomaly_working_dir
     dataloader = DataLoader(evaluation_dataset, batch_size=batch_size,
                             collate_fn=collate_fn)
     predictions = []
     predictions_ood = []
     has_anomoly = False
+
+    working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_eval_")
+    instance_working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_instance_eval_")
+    anomaly_working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_anomaly_eval_")
+
     for count, inputs in enumerate(dataloader):
         print("count: ", count)
         logits = estimator(inputs)
@@ -682,8 +690,6 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
         del logits
         torch.cuda.empty_cache()
 
-        if count == 2:
-            break
 
     gt_path = evaluation_dataset.root
     result = {}

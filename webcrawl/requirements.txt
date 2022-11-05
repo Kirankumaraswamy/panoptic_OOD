@@ -1,0 +1,9 @@
+django
+mysqlclient
+requests
+pymysql
+Scrapy==2.4.1
+bs4
+nltk
+psutil
+scrapyd

@@ -178,6 +178,7 @@ class PanopticDeepLab(nn.Module):
                 sem_out_ood = torch.tensor(prediction)
                 c = c.cpu()
                 o = o.cpu()
+                sem_out = sem_out.cpu()
 
             # Post-processing to get panoptic segmentation.
             panoptic_image, _ = get_panoptic_segmentation(

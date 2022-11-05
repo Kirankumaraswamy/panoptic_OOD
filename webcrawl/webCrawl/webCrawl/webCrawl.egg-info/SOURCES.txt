@@ -1,0 +1,6 @@
+setup.cfg
+setup.py
+webCrawl.egg-info/PKG-INFO
+webCrawl.egg-info/SOURCES.txt
+webCrawl.egg-info/dependency_links.txt
+webCrawl.egg-info/top_level.txt
