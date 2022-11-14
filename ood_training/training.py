@@ -28,6 +28,7 @@ warnings.filterwarnings('ignore')
 from panoptic_evaluation.evaluation import data_load, data_evaluate
 import matplotlib.pyplot as plt
 import tqdm
+from torch.utils.data.distributed import DistributedSampler
 
 def panoptic_deep_lab_collate(batch):
     data = [item[0] for item in batch]
@@ -42,8 +43,9 @@ def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
     total_loss_seg = 0
     total_loss_offset = 0
     network = network.train()
+
     for i, (x, target) in enumerate(dataloader_train):
-        #print("Train : len of data loader: ", len(dataloader_train))
+        #print("Train : len of data loader: ", len(dataloader_train), comm.get_rank())
         optimizer.zero_grad()
         loss_dict = network(x)
         losses = sum(loss_dict.values())
@@ -54,14 +56,19 @@ def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
         optimizer.zero_grad()
         losses.backward()
         optimizer.step()
+
         total_loss += losses_reduced
         total_loss_center += loss_dict_reduced['loss_center']
         total_loss_seg += loss_dict_reduced['loss_sem_seg']
         total_loss_offset += loss_dict_reduced['loss_offset']
 
         scheduler.step()
-        print("\rEpoch {} : Train Progress: {:>3.2f} %".format(epoch, ((i + 1) * config.no_gpus * 100) / len(dataloader_train)), end=' ')
 
+        if comm.is_main_process():
+            print("\rEpoch {} : Train Progress: {:>3.2f} % : Batch loss: {}, i: {}/{}".format(epoch, ((i + 1)  * 100) / len(dataloader_train), losses_reduced, i, len(dataloader_train)), end=' ')
+
+        del loss_dict, loss_dict_reduced, losses_reduced, losses
+        torch.cuda.empty_cache()
     loss = {
         "loss_total": total_loss / (i+1),
         "loss_sem_seg": total_loss_seg / (i+1),
@@ -90,8 +97,13 @@ def eval_model(network, dataloader_val, epoch=None):
         total_loss_center += loss_dict_reduced['loss_center']
         total_loss_seg += loss_dict_reduced['loss_sem_seg']
         total_loss_offset += loss_dict_reduced['loss_offset']
+        
+        if comm.is_main_process():
+            print("\rEpoch {} : Val Progress: {:>3.2f} % : Batch loss: {}, i: {}/{} ".format(epoch, ((i + 1) * 100)  / len(dataloader_val), losses_reduced, i, len(dataloader_val)), end=' ')
+         
+        del loss_dict, loss_dict_reduced, losses_reduced, losses
+        torch.cuda.empty_cache()
 
-        print("\rEpoch {} : Val Progress: {:>3.2f} %".format(epoch, ((i + 1) * config.no_gpus * 100)  / len(dataloader_val)), end=' ')
 
     loss = {
         "loss_total": total_loss / (i+1),
@@ -127,6 +139,10 @@ def training_routine(args, network, dataset_cfg):
 
     dataset_train = CityscapesOOD(root=config.cityscapes_ood_path, split=config.split, cfg=dataset_cfg)
     dataset_val = CityscapesOOD(root=config.cityscapes_ood_path, split="val", cfg=dataset_cfg)
+
+    train_sampler = DistributedSampler(dataset_train, num_replicas=comm.get_world_size(), rank=comm.get_rank())
+    val_sampler = DistributedSampler(dataset_val, num_replicas=comm.get_world_size(), rank=comm.get_rank())
+
     start = time.time()
 
     # network = torch.nn.DataParallel(network).cuda()
@@ -144,10 +160,10 @@ def training_routine(args, network, dataset_cfg):
             ckpt_path, resume=True
         )
 
-    dataloader_train = DataLoader(dataset_train, batch_size=config.batch_size, shuffle=True,
-                            collate_fn=panoptic_deep_lab_collate)
-    dataloader_val = DataLoader(dataset_val, batch_size=config.batch_size, shuffle=True,
-                                  collate_fn=panoptic_deep_lab_collate)
+    dataloader_train = DataLoader(dataset_train, batch_size=config.batch_size, shuffle=False,
+                            collate_fn=panoptic_deep_lab_collate, num_workers=0, sampler=train_sampler)
+    dataloader_val = DataLoader(dataset_val, batch_size=config.batch_size, shuffle=False,
+                                  collate_fn=panoptic_deep_lab_collate, num_workers=0, sampler=val_sampler)
 
     losses_total_train = []
     losses_total_val = []
@@ -156,6 +172,10 @@ def training_routine(args, network, dataset_cfg):
     losses_offset = []
     best_val_loss = 999
     best_epoch = 0
+    if comm.is_main_process():
+        open("./status_"+config.suffix+".txt", "w").close()
+    
+
     for epoch in range(start_epoch, start_epoch + epochs):
         """Perform one epoch of training"""
 
@@ -164,6 +184,8 @@ def training_routine(args, network, dataset_cfg):
         torch.cuda.empty_cache()
         val_loss = eval_model(network, dataloader_val, epoch)
         if comm.is_main_process():
+            with open("./status_"+config.suffix+".txt", "a") as f:
+                 f.write("\nEpoch {} with Train loss = {} and Val loss = {}".format(epoch, train_loss['loss_total'], val_loss['loss_total']))
             print("\rEpoch {} with Train loss = {} and Val loss = {}".format(epoch, train_loss['loss_total'], val_loss['loss_total']))
         losses_total_train.append(train_loss["loss_total"])
         losses_total_val.append(val_loss["loss_total"])
@@ -173,23 +195,38 @@ def training_routine(args, network, dataset_cfg):
 
         torch.cuda.empty_cache()
 
-        if comm.is_main_process() and val_loss["loss_total"] < best_val_loss:
-            best_val_loss = val_loss["loss_total"]
-            best_epoch = epoch
+        if comm.is_main_process():
+            if val_loss["loss_total"] < best_val_loss:
+                best_val_loss = val_loss["loss_total"]
+                best_epoch = epoch
 
-            """Save model state"""
-            save_basename = config.model_name + "_best_model.pth"
-            print('Saving checkpoint', os.path.join(config.weights_dir, save_basename))
-            torch.save({
-                'model': network.state_dict(),
-                'epoch': epoch
-            }, os.path.join(config.weights_dir, save_basename))
+                """Save model state"""
+                save_basename = config.model_name + "_best_model_"+config.suffix+".pth"
+                with open("./status_1.txt", "a") as f:
+                    f.write(" Saving checkpoint at: {}".format(epoch))
+                print('Saving checkpoint', os.path.join(config.weights_dir, save_basename))
+                torch.save({
+                    'model': network.state_dict(),
+                    'epoch': epoch
+                }, os.path.join(config.weights_dir, save_basename))
 
-            '''network.eval()
-            result = eval_metric_model(network)
-            print("IoU: ", result["semantic_seg"]["sem_seg"]["IoU"], ", PQ: ",
-                  result["panotic_seg"]["panoptic_seg"]["PQ"])'''
+                '''network.eval()
+                result = eval_metric_model(network)
+                print("IoU: ", result["semantic_seg"]["sem_seg"]["IoU"], ", PQ: ",
+                result["panotic_seg"]["panoptic_seg"]["PQ"])'''
+
+            if (epoch) % 20 == 0:
+                """Save model state"""
+                save_basename = config.model_name + "_model_"+config.suffix+"_"+str(epoch)+".pth"
+                torch.save({
+                    'model': network.state_dict(),
+                    'epoch': epoch
+                }, os.path.join(config.weights_dir, save_basename))
+
+
         torch.cuda.empty_cache()
+
+
 
         if comm.is_main_process():
             x_values = [i for i in range(start_epoch, epoch + 1)]
@@ -198,22 +235,22 @@ def training_routine(args, network, dataset_cfg):
             plt.plot(x_values, losses_total_val, label="Val loss")
             plt.title("Total loss")
             plt.legend()
-            fig.savefig("./total_loss.png")
+            fig.savefig("./total_loss_"+config.suffix+".png")
 
             fig = plt.figure("Semantic loss " + str(epoch))
             plt.plot(x_values, losses_seg)
             plt.title("Semantic loss")
-            fig.savefig("./semantic_loss.png")
+            fig.savefig("./semantic_loss_"+config.suffix+".png")
 
             fig = plt.figure("Center loss " + str(epoch))
             plt.plot(x_values, losses_center)
             plt.title("Center loss")
-            fig.savefig("./center_loss.png")
+            fig.savefig("./center_loss_"+config.suffix+".png")
 
             fig = plt.figure("Offset loss " + str(epoch))
             plt.plot(x_values, losses_offset)
             plt.title("Offset loss")
-            fig.savefig("./offset_loss.png")
+            fig.savefig("./offset_loss_"+config.suffix+".png")
 
     end = time.time()
     hours, rem = divmod(end - start, 3600)
@@ -225,7 +262,7 @@ def training_routine(args, network, dataset_cfg):
         print(losses_total_val)
         print(losses_seg)
         print(losses_center)
-        print(losses_offset):q
+        print(losses_offset)
 
 def main(args):
     # load configuration from cfg files for detectron2
@@ -268,6 +305,7 @@ if __name__ == '__main__':
     args = default_argument_parser().parse_args()
     # args from current file
     args.default_args = vars(parser.parse_args())
+    #args.dist_url = 'tcp://127.0.0.1:64485'
     print("Command Line Args:", args)
     launch(
         main,
@@ -278,4 +316,4 @@ if __name__ == '__main__':
         args=(args,),
     )
 
-    # main(vars(parser.parse_args()))
+    #main(args)
