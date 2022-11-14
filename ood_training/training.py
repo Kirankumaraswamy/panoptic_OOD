@@ -22,7 +22,7 @@ from detectron2.checkpoint import DetectionCheckpointer
 from torchvision.transforms import Compose, RandomHorizontalFlip, Normalize, ToTensor
 from torch.nn.parallel import DistributedDataParallel
 import detectron2.utils.comm as comm
-from detectron2.solver import build_lr_scheduler
+from detectron2.projects.deeplab import build_lr_scheduler
 import warnings
 warnings.filterwarnings('ignore')
 from panoptic_evaluation.evaluation import data_load, data_evaluate
