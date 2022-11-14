@@ -15,6 +15,7 @@ from torchvision.transforms import Resize, RandomCrop
 from torchvision.transforms.functional import InterpolationMode
 from detectron2.data import detection_utils as utils
 import torchvision.transforms.functional as TF
+from detectron2.data import transforms as T
 
 
 
@@ -95,7 +96,10 @@ class CityscapesOOD(Dataset):
         self.root = root
         self.split = split
         self.mode = 'gtFine' if "fine" in mode.lower() else 'gtCoarse'
-        self.transform = transform
+        if transform is not None:
+            self.augmentations = T.AugmentationList(transform)
+        else:
+            self.augmentations = None
         self.images = []
         self.targets = []
         self.predictions = []
@@ -105,7 +109,6 @@ class CityscapesOOD(Dataset):
             self.cityscapes_data_dicts = DatasetCatalog.get("cityscapes_fine_panoptic_test")
         else:
             self.cityscapes_data_dicts = DatasetCatalog.get("cityscapes_fine_panoptic_val")
-
 
         # needed for panoptic training
         dataset_names = 'cityscapes_fine_panoptic_train'
@@ -127,24 +130,20 @@ class CityscapesOOD(Dataset):
         data = self.cityscapes_data_dicts[i]
         # image = Image.open(data["file_name"]).convert('RGB')
         image = utils.read_image(data["file_name"])
-        image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+
         target = []
         pan_seg_gt = utils.read_image(data["pan_seg_file_name"], "RGB")
+
+        # Reuses semantic transform for panoptic labels.
+        aug_input = T.AugInput(image, sem_seg=pan_seg_gt)
+        if self.augmentations is not None:
+            _ = self.augmentations(aug_input)
+        image, pan_seg_gt = aug_input.image, aug_input.sem_seg
+
+
+        image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+
         pan_seg_gt = torch.as_tensor(pan_seg_gt.astype("long")).squeeze().permute(-1, 0, 1)
-
-        '''if self.transform is not None:
-            # image, pan_seg_gt = self.transform(image, pan_seg_gt)
-            c, h, w = image.size()
-            if h <= 720 or w <= 720:
-                T = Resize(size=(720, 720), interpolation=InterpolationMode.NEAREST)
-                image = T(image)
-                pan_seg_gt = T(torch.unsqueeze(pan_seg_gt, dim=0))
-                pan_seg_gt = torch.squeeze(pan_seg_gt)
-
-            i, j, h, w = RandomCrop.get_params(
-                image, output_size=(720, 720))
-            image = TF.crop(image, i, j, h, w)
-            pan_seg_gt = TF.crop(pan_seg_gt, i, j, h, w)'''
 
         targets = self.panoptic_target_generator(rgb2id(pan_seg_gt.permute(1, 2, 0).numpy()),
                                                  data["segments_info"])

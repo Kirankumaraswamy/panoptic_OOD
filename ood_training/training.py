@@ -22,19 +22,58 @@ from detectron2.checkpoint import DetectionCheckpointer
 from torchvision.transforms import Compose, RandomHorizontalFlip, Normalize, ToTensor
 from torch.nn.parallel import DistributedDataParallel
 import detectron2.utils.comm as comm
-from detectron2.solver import build_lr_scheduler, build_optimizer
+from detectron2.solver import build_lr_scheduler
 import warnings
 warnings.filterwarnings('ignore')
 from panoptic_evaluation.evaluation import data_load, data_evaluate
 import matplotlib.pyplot as plt
 import tqdm
 from torch.utils.data.distributed import DistributedSampler
+from detectron2.solver import get_default_optimizer_params
+from detectron2.solver.build import maybe_add_gradient_clipping
+import detectron2.data.transforms as T
 
 def panoptic_deep_lab_collate(batch):
     data = [item[0] for item in batch]
     target = [item[1] for item in batch]
     # target = torch.stack(target)
     return data, target
+
+def build_sem_seg_train_aug(cfg):
+    augs = [
+        T.ResizeShortestEdge(
+            cfg.INPUT.MIN_SIZE_TRAIN, cfg.INPUT.MAX_SIZE_TRAIN, cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
+        )
+    ]
+    if cfg.INPUT.CROP.ENABLED:
+        augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
+    augs.append(T.RandomFlip())
+    return augs
+
+def build_optimizer(cfg, model):
+    """
+    Build an optimizer from config.
+    """
+    params = get_default_optimizer_params(
+        model,
+        weight_decay=cfg.SOLVER.WEIGHT_DECAY,
+        weight_decay_norm=cfg.SOLVER.WEIGHT_DECAY_NORM,
+    )
+
+    optimizer_type = cfg.SOLVER.OPTIMIZER
+    if optimizer_type == "SGD":
+        return maybe_add_gradient_clipping(cfg, torch.optim.SGD)(
+            params,
+            cfg.SOLVER.BASE_LR,
+            momentum=cfg.SOLVER.MOMENTUM,
+            nesterov=cfg.SOLVER.NESTEROV,
+        )
+    elif optimizer_type == "ADAM":
+        return maybe_add_gradient_clipping(cfg, torch.optim.Adam)(params, cfg.SOLVER.BASE_LR)
+    else:
+        raise NotImplementedError(f"no optimizer type {optimizer_type}")
+
+
 
 def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
     loss = None
@@ -137,7 +176,7 @@ def training_routine(args, network, dataset_cfg):
     ckpt_path = config.ckpt_path
 
 
-    dataset_train = CityscapesOOD(root=config.cityscapes_ood_path, split=config.split, cfg=dataset_cfg)
+    dataset_train = CityscapesOOD(root=config.cityscapes_ood_path, split=config.split, cfg=dataset_cfg, transform=build_sem_seg_train_aug(dataset_cfg))
     dataset_val = CityscapesOOD(root=config.cityscapes_ood_path, split="val", cfg=dataset_cfg)
 
     train_sampler = DistributedSampler(dataset_train, num_replicas=comm.get_world_size(), rank=comm.get_rank())
@@ -147,9 +186,6 @@ def training_routine(args, network, dataset_cfg):
 
     # network = torch.nn.DataParallel(network).cuda()
     network = network.cuda()
-
-    transform = Compose([RandomHorizontalFlip(), ToTensor(),
-                         Normalize(dataset_train.mean, dataset_train.std)])
 
     optimizer = build_optimizer(dataset_cfg, network)
     scheduler = build_lr_scheduler(dataset_cfg, optimizer)
