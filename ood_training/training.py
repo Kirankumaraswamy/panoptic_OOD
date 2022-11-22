@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from torch.utils.data import DataLoader
-from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, launch
+from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, launch, create_ddp_model
 from detectron2.projects.panoptic_deeplab import (
     add_panoptic_deeplab_config
 )
@@ -33,6 +33,7 @@ from detectron2.solver import get_default_optimizer_params
 from detectron2.solver.build import maybe_add_gradient_clipping
 import detectron2.data.transforms as T
 
+
 def panoptic_deep_lab_collate(batch):
     data = [item[0] for item in batch]
     target = [item[1] for item in batch]
@@ -45,8 +46,10 @@ def build_sem_seg_train_aug(cfg):
             cfg.INPUT.MIN_SIZE_TRAIN, cfg.INPUT.MAX_SIZE_TRAIN, cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
         )
     ]
+
     if cfg.INPUT.CROP.ENABLED:
         augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
+
     augs.append(T.RandomFlip())
     return augs
 
@@ -74,7 +77,11 @@ def build_optimizer(cfg, model):
         raise NotImplementedError(f"no optimizer type {optimizer_type}")
 
 
-
+batch_loss = 0
+batch_center_loss = 0
+batch_offset_loss = 0
+batch_semantic_loss =0
+iteration = 27900
 def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
     loss = None
     total_loss = 0
@@ -83,7 +90,12 @@ def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
     total_loss_offset = 0
     network = network.train()
 
-    for i, (x, target) in enumerate(dataloader_train):
+    global batch_loss
+    global batch_center_loss
+    global batch_offset_loss
+    global batch_semantic_loss
+    global iteration
+    for i, (x,target) in enumerate(dataloader_train):
         #print("Train : len of data loader: ", len(dataloader_train), comm.get_rank())
         optimizer.zero_grad()
         loss_dict = network(x)
@@ -100,14 +112,28 @@ def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
         total_loss_center += loss_dict_reduced['loss_center']
         total_loss_seg += loss_dict_reduced['loss_sem_seg']
         total_loss_offset += loss_dict_reduced['loss_offset']
+        batch_loss += losses_reduced
+        batch_center_loss += loss_dict_reduced['loss_center']
+        batch_offset_loss += loss_dict_reduced['loss_offset']
+        batch_semantic_loss += loss_dict_reduced['loss_sem_seg']
 
         scheduler.step()
 
         if comm.is_main_process():
-            print("\rEpoch {} : Train Progress: {:>3.2f} % : Batch loss: {}, i: {}/{}".format(epoch, ((i + 1)  * 100) / len(dataloader_train), losses_reduced, i, len(dataloader_train)), end=' ')
+            print("\rEpoch {} , iteration: {} :Train Progress: {:>3.2f} % : Batch loss: {}, i: {}/{}".format(epoch, iteration, ((i + 1)  * 100) / len(dataloader_train), losses_reduced, i, len(dataloader_train)), end=' ')
 
-        del loss_dict, loss_dict_reduced, losses_reduced, losses
-        torch.cuda.empty_cache()
+            if (iteration+1) % 20 == 0:
+
+                with open("./status_"+config.suffix+".txt", "a") as f:
+                    f.write("\nEpoch {}, iteration: {}, total_loss: {}, loss_sem_seg: {}, loss_center: {}, loss_offset: {}, lr: {}".format(epoch, iteration, batch_loss/20, batch_semantic_loss/20, batch_center_loss/20, batch_offset_loss/20, scheduler.get_last_lr()))
+                    '''f.write("\nEpoch {}, iteration: {}, total_loss: {}, loss_sem_seg: {}, loss_center: {}, loss_offset: {}, lr: {}".format(epoch, iteration, losses_reduced, loss_dict_reduced['loss_sem_seg'], loss_dict_reduced['loss_center'], loss_dict_reduced['loss_offset'], scheduler.get_last_lr()))'''
+                batch_loss = 0
+                batch_center_loss = 0
+                batch_offset_loss = 0
+                batch_semantic_loss =0
+            iteration += 1
+    del loss_dict, loss_dict_reduced, losses_reduced, losses
+    torch.cuda.empty_cache()
     loss = {
         "loss_total": total_loss / (i+1),
         "loss_sem_seg": total_loss_seg / (i+1),
@@ -139,7 +165,7 @@ def eval_model(network, dataloader_val, epoch=None):
         
         if comm.is_main_process():
             print("\rEpoch {} : Val Progress: {:>3.2f} % : Batch loss: {}, i: {}/{} ".format(epoch, ((i + 1) * 100)  / len(dataloader_val), losses_reduced, i, len(dataloader_val)), end=' ')
-         
+    
         del loss_dict, loss_dict_reduced, losses_reduced, losses
         torch.cuda.empty_cache()
 
@@ -174,10 +200,27 @@ def training_routine(args, network, dataset_cfg):
     start_epoch = config.start_epoch
     epochs = config.training_epoch
     ckpt_path = config.ckpt_path
+    
+    optimizer = build_optimizer(dataset_cfg, network)
+    scheduler = build_lr_scheduler(dataset_cfg, optimizer)
 
+    checkpointer = DetectionCheckpointer(
+        network, ckpt_path, optimizer=optimizer, scheduler=scheduler
+    )
+
+    if ckpt_path is not None:
+        print("Checkpoint file:", ckpt_path)
+        start_epoch = checkpointer.resume_or_load(
+            ckpt_path, resume=True
+        ).get("epoch", -1)+1
+    else:
+        # This is to initialize pretrained backbone weights
+        checkpointer.resume_or_load(
+            dataset_cfg.MODEL.WEIGHTS, resume=False
+        )
 
     dataset_train = CityscapesOOD(root=config.cityscapes_ood_path, split=config.split, cfg=dataset_cfg, transform=build_sem_seg_train_aug(dataset_cfg))
-    dataset_val = CityscapesOOD(root=config.cityscapes_ood_path, split="val", cfg=dataset_cfg)
+    dataset_val = CityscapesOOD(root=config.cityscapes_ood_path, split="val", cfg=dataset_cfg, transform=build_sem_seg_train_aug(dataset_cfg))
 
     train_sampler = DistributedSampler(dataset_train, num_replicas=comm.get_world_size(), rank=comm.get_rank())
     val_sampler = DistributedSampler(dataset_val, num_replicas=comm.get_world_size(), rank=comm.get_rank())
@@ -187,14 +230,6 @@ def training_routine(args, network, dataset_cfg):
     # network = torch.nn.DataParallel(network).cuda()
     network = network.cuda()
 
-    optimizer = build_optimizer(dataset_cfg, network)
-    scheduler = build_lr_scheduler(dataset_cfg, optimizer)
-
-    print("Checkpoint file:", ckpt_path)
-    if ckpt_path is not None:
-        DetectionCheckpointer(network).resume_or_load(
-            ckpt_path, resume=True
-        )
 
     dataloader_train = DataLoader(dataset_train, batch_size=config.batch_size, shuffle=False,
                             collate_fn=panoptic_deep_lab_collate, num_workers=0, sampler=train_sampler)
@@ -209,19 +244,20 @@ def training_routine(args, network, dataset_cfg):
     best_val_loss = 999
     best_epoch = 0
     if comm.is_main_process():
-        open("./status_"+config.suffix+".txt", "w").close()
-    
+        if not os.path.exists("./status_"+config.suffix+".txt"):
+            open("./status_"+config.suffix+".txt", "w").close()
+
 
     for epoch in range(start_epoch, start_epoch + epochs):
         """Perform one epoch of training"""
 
         network.train()
-        train_loss = train_model(network, dataloader_train, optimizer, scheduler, epoch)
+        train_loss= train_model(network, dataloader_train, optimizer, scheduler, epoch)
         torch.cuda.empty_cache()
         val_loss = eval_model(network, dataloader_val, epoch)
         if comm.is_main_process():
             with open("./status_"+config.suffix+".txt", "a") as f:
-                 f.write("\nEpoch {} with Train loss = {} and Val loss = {}".format(epoch, train_loss['loss_total'], val_loss['loss_total']))
+                f.write("\nEpoch {} with Train loss = {} and Val loss = {}".format(epoch, train_loss['loss_total'], val_loss['loss_total']))
             print("\rEpoch {} with Train loss = {} and Val loss = {}".format(epoch, train_loss['loss_total'], val_loss['loss_total']))
         losses_total_train.append(train_loss["loss_total"])
         losses_total_val.append(val_loss["loss_total"])
@@ -238,12 +274,14 @@ def training_routine(args, network, dataset_cfg):
 
                 """Save model state"""
                 save_basename = config.model_name + "_best_model_"+config.suffix+".pth"
-                with open("./status_1.txt", "a") as f:
+                with open("./status_" +config.suffix+".txt", "a") as f:
                     f.write(" Saving checkpoint at: {}".format(epoch))
                 print('Saving checkpoint', os.path.join(config.weights_dir, save_basename))
                 torch.save({
                     'model': network.state_dict(),
-                    'epoch': epoch
+                    'epoch': epoch,
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict(),
                 }, os.path.join(config.weights_dir, save_basename))
 
                 '''network.eval()
@@ -251,12 +289,14 @@ def training_routine(args, network, dataset_cfg):
                 print("IoU: ", result["semantic_seg"]["sem_seg"]["IoU"], ", PQ: ",
                 result["panotic_seg"]["panoptic_seg"]["PQ"])'''
 
-            if (epoch) % 20 == 0:
+            if (epoch) % 10 == 0:
                 """Save model state"""
                 save_basename = config.model_name + "_model_"+config.suffix+"_"+str(epoch)+".pth"
                 torch.save({
                     'model': network.state_dict(),
-                    'epoch': epoch
+                    'epoch': epoch,
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict(),
                 }, os.path.join(config.weights_dir, save_basename))
 
 
@@ -318,9 +358,10 @@ def main(args):
 
     distributed = comm.get_world_size() > 1
     if distributed:
-        network = DistributedDataParallel(
+        network = create_ddp_model(network, broadcast_buffers=False)
+        '''network = DistributedDataParallel(
             network, device_ids=[comm.get_local_rank()], broadcast_buffers=False
-        )
+        )'''
 
     """Perform training"""
     training_routine(args, network, cfg)
@@ -341,7 +382,7 @@ if __name__ == '__main__':
     args = default_argument_parser().parse_args()
     # args from current file
     args.default_args = vars(parser.parse_args())
-    #args.dist_url = 'tcp://127.0.0.1:64485'
+    args.dist_url = 'tcp://127.0.0.1:64486'
     print("Command Line Args:", args)
     launch(
         main,

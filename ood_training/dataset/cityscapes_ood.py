@@ -142,15 +142,12 @@ class CityscapesOOD(Dataset):
 
 
         image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+        #pan_seg_gt = torch.as_tensor(pan_seg_gt.astype("long")).squeeze().permute(-1, 0, 1)
 
-        pan_seg_gt = torch.as_tensor(pan_seg_gt.astype("long")).squeeze().permute(-1, 0, 1)
-
-        targets = self.panoptic_target_generator(rgb2id(pan_seg_gt.permute(1, 2, 0).numpy()),
+        targets = self.panoptic_target_generator(rgb2id(pan_seg_gt),
                                                  data["segments_info"])
         data.update(targets)
         target = targets
-        # we don't use default loss calculation from detectron. To avoid error because of OOD value (19)
-        data["sem_seg"] = data["sem_seg"]
         '''import matplotlib.pyplot as plt
         plt.imshow(torch.permute(image, (1, 2, 0)).numpy())
         plt.show()
@@ -159,8 +156,8 @@ class CityscapesOOD(Dataset):
         plt.imshow(target["center"].numpy())
         plt.show()'''
         data["image"] = image
-        data["height"] = image.shape[1]
-        data["width"] = image.shape[2]
+        data["height"] = 1024
+        data["width"] = 2048
         return data, target
 
     def __len__(self) -> int:
