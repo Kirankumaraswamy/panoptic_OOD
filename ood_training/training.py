@@ -24,6 +24,7 @@ from torch.nn.parallel import DistributedDataParallel
 import detectron2.utils.comm as comm
 from detectron2.projects.deeplab import build_lr_scheduler
 import warnings
+
 warnings.filterwarnings('ignore')
 from panoptic_evaluation.evaluation import data_load, data_evaluate
 import matplotlib.pyplot as plt
@@ -32,6 +33,7 @@ from torch.utils.data.distributed import DistributedSampler
 from detectron2.solver import get_default_optimizer_params
 from detectron2.solver.build import maybe_add_gradient_clipping
 import detectron2.data.transforms as T
+import matplotlib.pyplot as plt
 
 
 def panoptic_deep_lab_collate(batch):
@@ -39,6 +41,7 @@ def panoptic_deep_lab_collate(batch):
     target = [item[1] for item in batch]
     # target = torch.stack(target)
     return data, target
+
 
 def build_sem_seg_train_aug(cfg):
     augs = [
@@ -52,6 +55,7 @@ def build_sem_seg_train_aug(cfg):
 
     augs.append(T.RandomFlip())
     return augs
+
 
 def build_optimizer(cfg, model):
     """
@@ -80,23 +84,41 @@ def build_optimizer(cfg, model):
 batch_loss = 0
 batch_center_loss = 0
 batch_offset_loss = 0
-batch_semantic_loss =0
-iteration = 27900
+batch_semantic_loss = 0
+batch_uncertainity_loss = 0
+iteration = 1
+
+
 def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
     loss = None
     total_loss = 0
     total_loss_center = 0
     total_loss_seg = 0
     total_loss_offset = 0
+    total_uncertainity_loss = 0
     network = network.train()
 
     global batch_loss
     global batch_center_loss
     global batch_offset_loss
     global batch_semantic_loss
+    global batch_uncertainity_loss
     global iteration
-    for i, (x,target) in enumerate(dataloader_train):
-        #print("Train : len of data loader: ", len(dataloader_train), comm.get_rank())
+    for i, (x, target) in enumerate(dataloader_train):
+        # print("Train : len of data loader: ", len(dataloader_train), comm.get_rank())
+
+        '''if comm.is_main_process():
+            plt.imshow(x[0]["image"].permute(1, 2, 0).numpy())
+            plt.show()
+            plt.imshow(torch.squeeze(x[0]["sem_seg"]).detach().cpu().numpy())
+            plt.show()
+            plt.imshow(torch.squeeze(x[0]["center"]).detach().cpu().numpy())
+            plt.show()
+            plt.imshow(torch.squeeze(x[0]["center_weights"]).detach().cpu().numpy())
+            plt.show()
+            plt.imshow(torch.squeeze(x[0]["ood_mask"]).detach().cpu().numpy())
+            plt.show()'''
+
         optimizer.zero_grad()
         loss_dict = network(x)
         losses = sum(loss_dict.values())
@@ -112,35 +134,42 @@ def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
         total_loss_center += loss_dict_reduced['loss_center']
         total_loss_seg += loss_dict_reduced['loss_sem_seg']
         total_loss_offset += loss_dict_reduced['loss_offset']
+        total_uncertainity_loss += loss_dict_reduced['uncertainity_loss']
         batch_loss += losses_reduced
         batch_center_loss += loss_dict_reduced['loss_center']
         batch_offset_loss += loss_dict_reduced['loss_offset']
         batch_semantic_loss += loss_dict_reduced['loss_sem_seg']
+        batch_uncertainity_loss += loss_dict_reduced['uncertainity_loss']
 
         scheduler.step()
 
         if comm.is_main_process():
-            print("\rEpoch {} , iteration: {} :Train Progress: {:>3.2f} % : Batch loss: {}, i: {}/{}".format(epoch, iteration, ((i + 1)  * 100) / len(dataloader_train), losses_reduced, i, len(dataloader_train)), end=' ')
+            print("\rEpoch {} , iteration: {} :Train Progress: {:>3.2f} % : Batch loss: {}, i: {}/{}".format(epoch, iteration,((i + 1) * 100) / len(dataloader_train),losses_reduced, i, len(dataloader_train)), end=' ')
 
-            if (iteration+1) % 20 == 0:
-
-                with open("./status_"+config.suffix+".txt", "a") as f:
-                    f.write("\nEpoch {}, iteration: {}, total_loss: {}, loss_sem_seg: {}, loss_center: {}, loss_offset: {}, lr: {}".format(epoch, iteration, batch_loss/20, batch_semantic_loss/20, batch_center_loss/20, batch_offset_loss/20, scheduler.get_last_lr()))
+            if (iteration + 1) % 20 == 0:
+                with open("./status_" + config.suffix + ".txt", "a") as f:
+                    f.write(
+                        "\nEpoch {}, iteration: {}, total_loss: {}, loss_sem_seg: {}, loss_center: {}, loss_offset: {}, loss_uncertainity: {}, lr: {}".format(
+                            epoch, iteration, batch_loss / 20, batch_semantic_loss / 20, batch_center_loss / 20,
+                            batch_offset_loss / 20, batch_uncertainity_loss/20, scheduler.get_last_lr()))
                     '''f.write("\nEpoch {}, iteration: {}, total_loss: {}, loss_sem_seg: {}, loss_center: {}, loss_offset: {}, lr: {}".format(epoch, iteration, losses_reduced, loss_dict_reduced['loss_sem_seg'], loss_dict_reduced['loss_center'], loss_dict_reduced['loss_offset'], scheduler.get_last_lr()))'''
                 batch_loss = 0
                 batch_center_loss = 0
                 batch_offset_loss = 0
-                batch_semantic_loss =0
+                batch_semantic_loss = 0
+                batch_uncertainity_loss = 0
             iteration += 1
     del loss_dict, loss_dict_reduced, losses_reduced, losses
     torch.cuda.empty_cache()
     loss = {
-        "loss_total": total_loss / (i+1),
-        "loss_sem_seg": total_loss_seg / (i+1),
-        "loss_center": total_loss_center / (i+1),
-        "loss_offset": total_loss_offset / (i+1)
+        "loss_total": total_loss / (i + 1),
+        "loss_sem_seg": total_loss_seg / (i + 1),
+        "loss_center": total_loss_center / (i + 1),
+        "loss_offset": total_loss_offset / (i + 1),
+        "loss_uncertainity": total_uncertainity_loss / (i + 1)
     }
     return loss
+
 
 def eval_model(network, dataloader_val, epoch=None):
     loss = None
@@ -148,9 +177,10 @@ def eval_model(network, dataloader_val, epoch=None):
     total_loss_center = 0
     total_loss_seg = 0
     total_loss_offset = 0
+    total_uncertainity_loss = 0
     network = network.train()
     for i, (x, target) in enumerate(dataloader_val):
-        #print("Eval : len of data loader: ", len(dataloader_val))
+        # print("Eval : len of data loader: ", len(dataloader_val))
 
         loss_dict = network(x)
         losses = sum(loss_dict.values())
@@ -162,25 +192,33 @@ def eval_model(network, dataloader_val, epoch=None):
         total_loss_center += loss_dict_reduced['loss_center']
         total_loss_seg += loss_dict_reduced['loss_sem_seg']
         total_loss_offset += loss_dict_reduced['loss_offset']
-        
+        total_uncertainity_loss += loss_dict_reduced['uncertainity_loss']
+
         if comm.is_main_process():
-            print("\rEpoch {} : Val Progress: {:>3.2f} % : Batch loss: {}, i: {}/{} ".format(epoch, ((i + 1) * 100)  / len(dataloader_val), losses_reduced, i, len(dataloader_val)), end=' ')
-    
+            print("\rEpoch {} : Val Progress: {:>3.2f} % : Batch loss: {}, i: {}/{} ".format(epoch,
+                                                                                             ((i + 1) * 100) / len(
+                                                                                                 dataloader_val),
+                                                                                             losses_reduced, i,
+                                                                                             len(dataloader_val)),
+                  end=' ')
+
         del loss_dict, loss_dict_reduced, losses_reduced, losses
         torch.cuda.empty_cache()
 
-
     loss = {
-        "loss_total": total_loss / (i+1),
-        "loss_sem_seg": total_loss_seg / (i+1),
-        "loss_center": total_loss_center / (i+1),
-        "loss_offset": total_loss_offset / (i+1)
+        "loss_total": total_loss / (i + 1),
+        "loss_sem_seg": total_loss_seg / (i + 1),
+        "loss_center": total_loss_center / (i + 1),
+        "loss_offset": total_loss_offset / (i + 1),
+        "loss_uncertainity": total_uncertainity_loss / (i + 1)
     }
     return loss
+
 
 def panoptic_deep_lab_val_collate(batch):
     data = [item for item in batch]
     return data
+
 
 def eval_metric_model(network):
     loss = None
@@ -200,7 +238,7 @@ def training_routine(args, network, dataset_cfg):
     start_epoch = config.start_epoch
     epochs = config.training_epoch
     ckpt_path = config.ckpt_path
-    
+
     optimizer = build_optimizer(dataset_cfg, network)
     scheduler = build_lr_scheduler(dataset_cfg, optimizer)
 
@@ -212,15 +250,17 @@ def training_routine(args, network, dataset_cfg):
         print("Checkpoint file:", ckpt_path)
         start_epoch = checkpointer.resume_or_load(
             ckpt_path, resume=True
-        ).get("epoch", -1)+1
+        ).get("epoch", -1) + 1
     else:
         # This is to initialize pretrained backbone weights
         checkpointer.resume_or_load(
             dataset_cfg.MODEL.WEIGHTS, resume=False
         )
 
-    dataset_train = CityscapesOOD(root=config.cityscapes_ood_path, split=config.split, cfg=dataset_cfg, transform=build_sem_seg_train_aug(dataset_cfg))
-    dataset_val = CityscapesOOD(root=config.cityscapes_ood_path, split="val", cfg=dataset_cfg, transform=build_sem_seg_train_aug(dataset_cfg))
+    dataset_train = CityscapesOOD(root=config.cityscapes_ood_path, split=config.split, cfg=dataset_cfg,
+                                  transform=build_sem_seg_train_aug(dataset_cfg))
+    dataset_val = CityscapesOOD(root=config.cityscapes_ood_path, split="val", cfg=dataset_cfg,
+                                transform=build_sem_seg_train_aug(dataset_cfg))
 
     train_sampler = DistributedSampler(dataset_train, num_replicas=comm.get_world_size(), rank=comm.get_rank())
     val_sampler = DistributedSampler(dataset_val, num_replicas=comm.get_world_size(), rank=comm.get_rank())
@@ -230,40 +270,42 @@ def training_routine(args, network, dataset_cfg):
     # network = torch.nn.DataParallel(network).cuda()
     network = network.cuda()
 
-
     dataloader_train = DataLoader(dataset_train, batch_size=config.batch_size, shuffle=False,
-                            collate_fn=panoptic_deep_lab_collate, num_workers=0, sampler=train_sampler)
+                                  collate_fn=panoptic_deep_lab_collate, num_workers=0, sampler=train_sampler)
     dataloader_val = DataLoader(dataset_val, batch_size=config.batch_size, shuffle=False,
-                                  collate_fn=panoptic_deep_lab_collate, num_workers=0, sampler=val_sampler)
+                                collate_fn=panoptic_deep_lab_collate, num_workers=0, sampler=val_sampler)
 
     losses_total_train = []
     losses_total_val = []
     losses_seg = []
     losses_center = []
     losses_offset = []
+    losses_uncertainity = []
     best_val_loss = 999
     best_epoch = 0
     if comm.is_main_process():
-        if not os.path.exists("./status_"+config.suffix+".txt"):
-            open("./status_"+config.suffix+".txt", "w").close()
-
+        if not os.path.exists("./status_" + config.suffix + ".txt"):
+            open("./status_" + config.suffix + ".txt", "w").close()
 
     for epoch in range(start_epoch, start_epoch + epochs):
         """Perform one epoch of training"""
 
         network.train()
-        train_loss= train_model(network, dataloader_train, optimizer, scheduler, epoch)
+        train_loss = train_model(network, dataloader_train, optimizer, scheduler, epoch)
         torch.cuda.empty_cache()
         val_loss = eval_model(network, dataloader_val, epoch)
         if comm.is_main_process():
-            with open("./status_"+config.suffix+".txt", "a") as f:
-                f.write("\nEpoch {} with Train loss = {} and Val loss = {}".format(epoch, train_loss['loss_total'], val_loss['loss_total']))
-            print("\rEpoch {} with Train loss = {} and Val loss = {}".format(epoch, train_loss['loss_total'], val_loss['loss_total']))
+            with open("./status_" + config.suffix + ".txt", "a") as f:
+                f.write("\nEpoch {} with Train loss = {} and Val loss = {}".format(epoch, train_loss['loss_total'],
+                                                                                   val_loss['loss_total']))
+            print("\rEpoch {} with Train loss = {} and Val loss = {}".format(epoch, train_loss['loss_total'],
+                                                                             val_loss['loss_total']))
         losses_total_train.append(train_loss["loss_total"])
         losses_total_val.append(val_loss["loss_total"])
         losses_seg.append(train_loss["loss_sem_seg"])
         losses_center.append(train_loss["loss_center"])
         losses_offset.append(train_loss["loss_offset"])
+        losses_uncertainity.append(train_loss["loss_uncertainity"])
 
         torch.cuda.empty_cache()
 
@@ -273,8 +315,8 @@ def training_routine(args, network, dataset_cfg):
                 best_epoch = epoch
 
                 """Save model state"""
-                save_basename = config.model_name + "_best_model_"+config.suffix+".pth"
-                with open("./status_" +config.suffix+".txt", "a") as f:
+                save_basename = config.model_name + "_best_model_" + config.suffix + ".pth"
+                with open("./status_" + config.suffix + ".txt", "a") as f:
                     f.write(" Saving checkpoint at: {}".format(epoch))
                 print('Saving checkpoint', os.path.join(config.weights_dir, save_basename))
                 torch.save({
@@ -291,7 +333,7 @@ def training_routine(args, network, dataset_cfg):
 
             if (epoch) % 10 == 0:
                 """Save model state"""
-                save_basename = config.model_name + "_model_"+config.suffix+"_"+str(epoch)+".pth"
+                save_basename = config.model_name + "_model_" + config.suffix + "_" + str(epoch) + ".pth"
                 torch.save({
                     'model': network.state_dict(),
                     'epoch': epoch,
@@ -299,10 +341,7 @@ def training_routine(args, network, dataset_cfg):
                     'scheduler': scheduler.state_dict(),
                 }, os.path.join(config.weights_dir, save_basename))
 
-
         torch.cuda.empty_cache()
-
-
 
         if comm.is_main_process():
             x_values = [i for i in range(start_epoch, epoch + 1)]
@@ -311,22 +350,27 @@ def training_routine(args, network, dataset_cfg):
             plt.plot(x_values, losses_total_val, label="Val loss")
             plt.title("Total loss")
             plt.legend()
-            fig.savefig("./total_loss_"+config.suffix+".png")
+            fig.savefig("./total_loss_" + config.suffix + ".png")
 
             fig = plt.figure("Semantic loss " + str(epoch))
             plt.plot(x_values, losses_seg)
             plt.title("Semantic loss")
-            fig.savefig("./semantic_loss_"+config.suffix+".png")
+            fig.savefig("./semantic_loss_" + config.suffix + ".png")
 
             fig = plt.figure("Center loss " + str(epoch))
             plt.plot(x_values, losses_center)
             plt.title("Center loss")
-            fig.savefig("./center_loss_"+config.suffix+".png")
+            fig.savefig("./center_loss_" + config.suffix + ".png")
 
             fig = plt.figure("Offset loss " + str(epoch))
             plt.plot(x_values, losses_offset)
             plt.title("Offset loss")
-            fig.savefig("./offset_loss_"+config.suffix+".png")
+            fig.savefig("./offset_loss_" + config.suffix + ".png")
+
+            fig = plt.figure("Uncertainity loss " + str(epoch))
+            plt.plot(x_values, losses_uncertainity)
+            plt.title("Uncertainity loss")
+            fig.savefig("./uncertainity_loss_" + config.suffix + ".png")
 
     end = time.time()
     hours, rem = divmod(end - start, 3600)
@@ -339,6 +383,7 @@ def training_routine(args, network, dataset_cfg):
         print(losses_seg)
         print(losses_center)
         print(losses_offset)
+
 
 def main(args):
     # load configuration from cfg files for detectron2
@@ -393,4 +438,4 @@ if __name__ == '__main__':
         args=(args,),
     )
 
-    #main(args)
+    # main(args)

@@ -10,12 +10,21 @@ import torch
 
 from detectron2.projects.panoptic_deeplab.target_generator import PanopticDeepLabTargetGenerator
 from detectron2.data import MetadataCatalog
-from panopticapi.utils import rgb2id
+from panopticapi.utils import rgb2id, id2rgb
 from torchvision.transforms import Resize, RandomCrop
 from torchvision.transforms.functional import InterpolationMode
 from detectron2.data import detection_utils as utils
 import torchvision.transforms.functional as TF
 from detectron2.data import transforms as T
+
+import matplotlib.pyplot as plt
+from matplotlib.path import Path
+import matplotlib.patches as patches
+import random
+import io
+import cv2
+from torchvision.transforms import Resize
+
 
 
 
@@ -63,7 +72,7 @@ class CityscapesOOD(Dataset):
         CityscapesClass('motorcycle', 32, 17, 'vehicle', 7, True, False, (0, 0, 230)),
         CityscapesClass('bicycle', 33, 18, 'vehicle', 7, True, False, (119, 11, 32)),
         CityscapesClass('license plate', -1, -1, 'vehicle', 7, False, True, (0, 0, 142)),
-        CityscapesClass('OOD', 50, 19, 'void', 0, True, False, (0, 200, 0)),
+        CityscapesClass('OOD', 50, 19, 'void', 0, True, False, (0, 255, 0)),
     ]
 
     """Normalization parameters"""
@@ -73,11 +82,16 @@ class CityscapesOOD(Dataset):
     """Useful information from labels"""
     ignore_in_eval_ids, label_ids, train_ids, train_id2id = [], [], [], []  # empty lists for storing ids
     color_palette_train_ids = [(0, 0, 0) for i in range(256)]
+    label_to_id = {}
+    label_to_train_id = {}
+
     for i in range(len(labels)):
         if labels[i].ignore_in_eval and labels[i].train_id not in ignore_in_eval_ids:
             ignore_in_eval_ids.append(labels[i].train_id)
     for i in range(len(labels)):
         label_ids.append(labels[i].id)
+        label_to_id[labels[i].name] = labels[i].id
+        label_to_train_id[labels[i].name] = labels[i].train_id
         if labels[i].train_id not in ignore_in_eval_ids:
             train_ids.append(labels[i].train_id)
             color_palette_train_ids[labels[i].train_id] = labels[i].color
@@ -143,9 +157,9 @@ class CityscapesOOD(Dataset):
 
         image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
         #pan_seg_gt = torch.as_tensor(pan_seg_gt.astype("long")).squeeze().permute(-1, 0, 1)
+        image, pan_seg_gt, data = self.add_random_mask(image, pan_seg_gt.copy(), data.copy())
 
-        targets = self.panoptic_target_generator(rgb2id(pan_seg_gt),
-                                                 data["segments_info"])
+        targets = self.panoptic_target_generator(rgb2id(pan_seg_gt), data["segments_info"])
         data.update(targets)
         target = targets
         '''import matplotlib.pyplot as plt
@@ -162,3 +176,106 @@ class CityscapesOOD(Dataset):
 
     def __len__(self) -> int:
         return len(self.cityscapes_data_dicts)
+
+    def add_random_mask(self, image,  pan_seg_gt, data_dict):
+        height = image.size()[-2]
+        width = image.size()[-1]
+
+        random_instances = random.randint(1, 4)
+
+        for i in range(random_instances):
+
+            instance_id = 1000 * self.label_to_id["OOD"] + i
+            n = random.randint(2, 9)  # Number of possibly sharp edges
+            r = random.random()  # magnitude of the perturbation from the unit circle,
+            # should be between 0 and 1
+            N = n * 3 + 1  # number of points in the Path
+            # There is the initial point and 3 points per cubic bezier curve. Thus, the curve will only pass though n points, which will be the sharp edges, the other 2 modify the shape of the bezier curve
+
+            angles = np.linspace(0, 2 * np.pi, N)
+            codes = np.full(N, Path.CURVE4)
+            codes[0] = Path.MOVETO
+            verts = np.stack((np.cos(angles), np.sin(angles))).T * (2 * r * np.random.random(N) + 1 - r)[:, None]
+
+            verts[-1, :] = verts[0, :]  # Using this instad of Path.CLOSEPOLY avoids an innecessary straight line
+            path = Path(verts, codes)
+
+            fig = plt.figure(1)
+            ax = fig.add_subplot(111)
+            patch = patches.PathPatch(path, facecolor='none', lw=2)
+            ax.add_patch(patch)
+
+            ax.set_xlim(np.min(verts) * 1.1, np.max(verts) * 1.1)
+            ax.set_ylim(np.min(verts) * 1.1, np.max(verts) * 1.1)
+            ax.axis('off')  # removes the axis to leave only the shape
+
+            with io.BytesIO() as buff:
+                fig.savefig(buff, format='raw')
+
+                buff.seek(0)
+                data = np.frombuffer(buff.getvalue(), dtype=np.uint8)
+            w, h = fig.canvas.get_width_height()
+            im = data.reshape((int(h), int(w), -1))[:, :, 0]
+            plt.figure(1).clear()
+
+            th, im_th = cv2.threshold(im, 220, 255, cv2.THRESH_BINARY_INV)
+
+            # Copy the thresholded image.
+            im_floodfill = im_th.copy()
+            h, w = im_th.shape[:2]
+            mask = np.zeros((h + 2, w + 2), np.uint8)
+
+            # Floodfill from point (0, 0)
+            cv2.floodFill(im_floodfill, mask, (0, 0), 255)
+            # Invert floodfilled image
+            im_floodfill_inv = cv2.bitwise_not(im_floodfill)
+            # Combine the two images to get the foreground.
+            im_out = im_th | im_floodfill_inv
+
+            random_width = random.randint(30, int(height/2))
+            random_height = random.randint(30, int(width/3))
+
+            im_out = torch.unsqueeze(torch.tensor(im_out), dim=0)
+            T = Resize(size=(random_height, random_width), interpolation=InterpolationMode.NEAREST)
+            im_out = T(im_out)
+            im_out = im_out.squeeze().numpy()
+
+            h, w = im_out.shape
+            mask = np.zeros((3, height, width), dtype="float64")
+
+            end_width = width - w
+            end_height = height - h
+            start_width = random.randint(0, end_width)
+            start_height = random.randint(0, end_height)
+
+            mask[:, start_height:start_height + h, start_width:start_width + w] += im_out
+            mask[np.where(mask == 0.0)] = 1.0
+            mask[np.where(mask == 255.0)] = 0.0
+
+            image = image * torch.tensor(mask, dtype=torch.uint8)
+
+            # add random pixel values to masked image Normalize(dataset.mean, dataset.std)
+            in_pixels = np.where(mask == 1.0)
+            ood_pixels = np.where(mask == 0.0)
+            ood_size = ood_pixels[0].size
+            random_pixels = np.random.randint(1, 254, ood_size)
+            mask[ood_pixels] = random_pixels
+            mask[in_pixels] = 0.0
+            image = image + torch.tensor(mask, dtype=torch.uint8)
+
+            panoptic_rgb_mask = id2rgb(instance_id)
+            pan_seg_gt[ood_pixels[1], ood_pixels[2], 0] = panoptic_rgb_mask[0]
+            pan_seg_gt[ood_pixels[1], ood_pixels[2], 1] = panoptic_rgb_mask[1]
+            pan_seg_gt[ood_pixels[1], ood_pixels[2], 2] = panoptic_rgb_mask[2]
+
+            segment_info = {
+                "area": ood_size,
+                "category_id": self.label_to_train_id["OOD"],
+                "id": instance_id,
+                "iscrowd": 0,
+                "is_ood": True,
+            }
+
+            data_dict['segments_info'].append(segment_info)
+
+        return image, pan_seg_gt, data_dict

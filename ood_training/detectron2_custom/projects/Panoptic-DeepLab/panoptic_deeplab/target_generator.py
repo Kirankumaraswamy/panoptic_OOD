@@ -78,6 +78,7 @@ class PanopticDeepLabTargetGenerator(object):
         """
         height, width = panoptic.shape[0], panoptic.shape[1]
         semantic = np.zeros_like(panoptic, dtype=np.uint8) + self.ignore_label
+        ood_mask = np.zeros_like(panoptic, dtype=np.uint8)
         center = np.zeros((height, width), dtype=np.float32)
         center_pts = []
         offset = np.zeros((2, height, width), dtype=np.float32)
@@ -96,7 +97,11 @@ class PanopticDeepLabTargetGenerator(object):
         for seg in segments_info:
             cat_id = seg["category_id"]
             if not (self.ignore_crowd_in_semantic and seg["iscrowd"]):
-                semantic[panoptic == seg["id"]] = cat_id
+                if "is_ood" in seg and seg["is_ood"]:
+                    ood_mask[panoptic == seg["id"]] = 1
+                    semantic[panoptic == seg["id"]] = self.ignore_label
+                else:
+                    semantic[panoptic == seg["id"]] = cat_id
             if not seg["iscrowd"]:
                 # Ignored regions are not in `segments_info`.
                 # Handle crowd region.
@@ -113,7 +118,8 @@ class PanopticDeepLabTargetGenerator(object):
                 # Find instance area
                 ins_area = len(mask_index[0])
                 if ins_area < self.small_instance_area:
-                    semantic_weights[panoptic == seg["id"]] = self.small_instance_weight
+                    if not "is_ood" in seg or not seg["is_ood"]:
+                        semantic_weights[panoptic == seg["id"]] = self.small_instance_weight
 
                 center_y, center_x = np.mean(mask_index[0]), np.mean(mask_index[1])
                 center_pts.append([center_y, center_x])
@@ -152,4 +158,5 @@ class PanopticDeepLabTargetGenerator(object):
             sem_seg_weights=torch.as_tensor(semantic_weights.astype(np.float32)),
             center_weights=torch.as_tensor(center_weights.astype(np.float32)),
             offset_weights=torch.as_tensor(offset_weights.astype(np.float32)),
+            ood_mask=torch.as_tensor(ood_mask.astype("long")),
         )
