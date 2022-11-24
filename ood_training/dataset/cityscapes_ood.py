@@ -148,6 +148,8 @@ class CityscapesOOD(Dataset):
         target = []
         pan_seg_gt = utils.read_image(data["pan_seg_file_name"], "RGB")
 
+        image, pan_seg_gt, data = self.add_random_mask(image, pan_seg_gt.copy(), data.copy())
+
         # Reuses semantic transform for panoptic labels.
         aug_input = T.AugInput(image, sem_seg=pan_seg_gt)
         if self.augmentations is not None:
@@ -157,7 +159,6 @@ class CityscapesOOD(Dataset):
 
         image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
         #pan_seg_gt = torch.as_tensor(pan_seg_gt.astype("long")).squeeze().permute(-1, 0, 1)
-        image, pan_seg_gt, data = self.add_random_mask(image, pan_seg_gt.copy(), data.copy())
 
         targets = self.panoptic_target_generator(rgb2id(pan_seg_gt), data["segments_info"])
         data.update(targets)
@@ -178,13 +179,11 @@ class CityscapesOOD(Dataset):
         return len(self.cityscapes_data_dicts)
 
     def add_random_mask(self, image,  pan_seg_gt, data_dict):
-        height = image.size()[-2]
-        width = image.size()[-1]
+        height, width, c = image.shape
 
-        random_instances = random.randint(1, 4)
+        random_instances = random.randint(2, 6)
 
         for i in range(random_instances):
-
             instance_id = 1000 * self.label_to_id["OOD"] + i
             n = random.randint(2, 9)  # Number of possibly sharp edges
             r = random.random()  # magnitude of the perturbation from the unit circle,
@@ -241,7 +240,7 @@ class CityscapesOOD(Dataset):
             im_out = im_out.squeeze().numpy()
 
             h, w = im_out.shape
-            mask = np.zeros((3, height, width), dtype="float64")
+            mask = np.zeros((3, height, width), dtype="uint8")
 
             end_width = width - w
             end_height = height - h
@@ -249,24 +248,26 @@ class CityscapesOOD(Dataset):
             start_height = random.randint(0, end_height)
 
             mask[:, start_height:start_height + h, start_width:start_width + w] += im_out
-            mask[np.where(mask == 0.0)] = 1.0
-            mask[np.where(mask == 255.0)] = 0.0
+            mask[np.where(mask == 0)] = 1
+            mask[np.where(mask == 255)] = 0
 
-            image = image * torch.tensor(mask, dtype=torch.uint8)
+            mask = mask.transpose((1, 2, 0))
+
+            image = image * mask
 
             # add random pixel values to masked image Normalize(dataset.mean, dataset.std)
-            in_pixels = np.where(mask == 1.0)
-            ood_pixels = np.where(mask == 0.0)
+            in_pixels = np.where(mask == 1)
+            ood_pixels = np.where(mask == 0)
             ood_size = ood_pixels[0].size
-            random_pixels = np.random.randint(1, 254, ood_size)
+            random_pixels = np.random.randint(1, 255, ood_size)
             mask[ood_pixels] = random_pixels
-            mask[in_pixels] = 0.0
-            image = image + torch.tensor(mask, dtype=torch.uint8)
+            mask[in_pixels] = 0
+            image = image + mask
 
             panoptic_rgb_mask = id2rgb(instance_id)
-            pan_seg_gt[ood_pixels[1], ood_pixels[2], 0] = panoptic_rgb_mask[0]
-            pan_seg_gt[ood_pixels[1], ood_pixels[2], 1] = panoptic_rgb_mask[1]
-            pan_seg_gt[ood_pixels[1], ood_pixels[2], 2] = panoptic_rgb_mask[2]
+            pan_seg_gt[ood_pixels[0], ood_pixels[1], 0] = panoptic_rgb_mask[0]
+            pan_seg_gt[ood_pixels[0], ood_pixels[1], 1] = panoptic_rgb_mask[1]
+            pan_seg_gt[ood_pixels[0], ood_pixels[1], 2] = panoptic_rgb_mask[2]
 
             segment_info = {
                 "area": ood_size,

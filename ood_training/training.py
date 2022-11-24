@@ -331,7 +331,7 @@ def training_routine(args, network, dataset_cfg):
                 print("IoU: ", result["semantic_seg"]["sem_seg"]["IoU"], ", PQ: ",
                 result["panotic_seg"]["panoptic_seg"]["PQ"])'''
 
-            if (epoch) % 10 == 0:
+            if (epoch) % 20 == 0:
                 """Save model state"""
                 save_basename = config.model_name + "_model_" + config.suffix + "_" + str(epoch) + ".pth"
                 torch.save({
