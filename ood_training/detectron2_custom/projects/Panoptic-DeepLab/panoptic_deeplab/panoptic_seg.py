@@ -358,21 +358,17 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
 
             ood_y = ood_y.squeeze(dim=1)
             ood_weights = torch.zeros_like(prediction_mask, dtype=torch.float32)
-            in_weights = torch.zeros_like(prediction_mask, dtype=torch.float32)
             ood_target = torch.ones_like(prediction_mask, dtype=torch.float32)
             ood_target[prediction_mask] = 0
 
             # consider only correct semantic predictions and then OOD pixels for loss calculation
-            in_weights[prediction_mask] = 1
-            ood_weights[ood_masks == 1] = 1
+            ood_weights[prediction_mask] = 1
+            ood_weights[ood_masks == 1] = 2
 
             u_loss = self.uncertainity_loss(ood_y, ood_target)
-            ood_u_loss = u_loss * ood_weights
-            in_u_loss = u_loss * in_weights
-            ood_u_loss = ood_u_loss.sum() / ood_weights.sum()
-            in_u_loss = in_u_loss.sum() / in_weights.sum()
-            uncertainity_loss = ood_u_loss + in_u_loss
-            uncertainity_loss = {"uncertainity_loss": uncertainity_loss * 1.0}
+            u_loss = u_loss * ood_weights
+            u_loss = u_loss.sum() / ood_weights.sum()
+            uncertainity_loss = {"uncertainity_loss": u_loss * 1.0}
 
             return None, (sem_loss, uncertainity_loss)
         else:
