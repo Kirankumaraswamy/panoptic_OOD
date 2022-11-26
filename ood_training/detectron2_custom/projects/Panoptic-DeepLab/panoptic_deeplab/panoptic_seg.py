@@ -24,6 +24,7 @@ from detectron2.structures import BitMasks, ImageList, Instances
 from detectron2.utils.registry import Registry
 
 from .post_processing import get_panoptic_segmentation
+import matplotlib.pyplot as plt
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -317,11 +318,49 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             )
             weight_init.c2_xavier_fill(self.head[0])
             weight_init.c2_xavier_fill(self.head[1])
+
         self.predictor = Conv2d(head_channels, num_classes, kernel_size=1)
         nn.init.normal_(self.predictor.weight, 0, 0.001)
         nn.init.constant_(self.predictor.bias, 0)
 
-        self.ood_head = copy.deepcopy(self.head)
+        # `head` is additional transform before predictor
+        if self.use_depthwise_separable_conv:
+            # We use a single 5x5 DepthwiseSeparableConv2d to replace
+            # 2 3x3 Conv2d since they have the same receptive field.
+            self.ood_head = DepthwiseSeparableConv2d(
+                decoder_channels[0]+19,
+                head_channels,
+                kernel_size=5,
+                padding=2,
+                norm1=norm,
+                activation1=F.relu,
+                norm2=norm,
+                activation2=F.relu,
+            )
+        else:
+            self.head = nn.Sequential(
+                Conv2d(
+                    decoder_channels[0]+19,
+                    decoder_channels[0]+19,
+                    kernel_size=3,
+                    padding=1,
+                    bias=use_bias,
+                    norm=get_norm(norm, decoder_channels[0]),
+                    activation=F.relu,
+                ),
+                Conv2d(
+                    decoder_channels[0]+19,
+                    head_channels,
+                    kernel_size=3,
+                    padding=1,
+                    bias=use_bias,
+                    norm=get_norm(norm, head_channels),
+                    activation=F.relu,
+                ),
+            )
+            weight_init.c2_xavier_fill(self.head[0])
+            weight_init.c2_xavier_fill(self.head[1])
+
         self.ood_predictor = Conv2d(head_channels, 1, kernel_size=1, activation=F.sigmoid)
         nn.init.normal_(self.ood_predictor.weight, 0, 0.001)
         nn.init.constant_(self.ood_predictor.bias, 0)
@@ -357,18 +396,22 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             )
 
             ood_y = ood_y.squeeze(dim=1)
+
             ood_weights = torch.zeros_like(prediction_mask, dtype=torch.float32)
             ood_target = torch.ones_like(prediction_mask, dtype=torch.float32)
             ood_target[prediction_mask] = 0
 
-            # consider only correct semantic predictions and then OOD pixels for loss calculation
-            ood_weights[prediction_mask] = 1
-            ood_weights[ood_masks == 1] = 2
+            # consider non void semantic predictions and then OOD pixels for loss calculation
+            ood_weights[targets != 255] = 1
+            ood_weights[ood_masks == 1] = 1
 
             u_loss = self.uncertainity_loss(ood_y, ood_target)
             u_loss = u_loss * ood_weights
             u_loss = u_loss.sum() / ood_weights.sum()
-            uncertainity_loss = {"uncertainity_loss": u_loss * 1.0}
+            uncertainity_loss = {"uncertainity_loss": u_loss * 2.0}
+
+            '''plt.imshow(torch.squeeze(ood_y).detach().cpu().numpy())
+            plt.show()'''
 
             return None, (sem_loss, uncertainity_loss)
         else:
@@ -384,7 +427,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         semantic_y = self.head(y)
         semantic_y = self.predictor(semantic_y)
 
-        ood_y = self.ood_head(y)
+        ood_y = self.ood_head(torch.cat((y, semantic_y), 1))
         ood_y = self.ood_predictor(ood_y)
         return semantic_y, ood_y
 
@@ -393,6 +436,9 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
         sem_prediction_mask = (torch.argmax(predictions, axis=1) == targets)
+        sem = torch.squeeze(torch.argmax(predictions, axis=1))
+        '''plt.imshow(sem.detach().cpu().numpy())
+        plt.show()'''
         loss = self.loss(predictions, targets, weights)
         losses = {"loss_sem_seg": loss * self.loss_weight}
         return losses, sem_prediction_mask
@@ -593,6 +639,9 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
+        '''plt.imshow(torch.squeeze(predictions).detach().cpu().numpy())
+        plt.show()'''
+
         loss = self.center_loss(predictions, targets) * weights
         if weights.sum() > 0:
             loss = loss.sum() / weights.sum()

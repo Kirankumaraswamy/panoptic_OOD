@@ -97,7 +97,7 @@ class PanopticDeepLabTargetGenerator(object):
         for seg in segments_info:
             cat_id = seg["category_id"]
             if not (self.ignore_crowd_in_semantic and seg["iscrowd"]):
-                if "is_ood" in seg and seg["is_ood"]:
+                if ("is_ood" in seg and seg["is_ood"]) or cat_id == 19:
                     ood_mask[panoptic == seg["id"]] = 1
                     semantic[panoptic == seg["id"]] = self.ignore_label
                 else:
@@ -118,7 +118,7 @@ class PanopticDeepLabTargetGenerator(object):
                 # Find instance area
                 ins_area = len(mask_index[0])
                 if ins_area < self.small_instance_area:
-                    if not "is_ood" in seg or not seg["is_ood"]:
+                    if (not "is_ood" in seg or not seg["is_ood"]) and cat_id != 19:
                         semantic_weights[panoptic == seg["id"]] = self.small_instance_weight
 
                 center_y, center_x = np.mean(mask_index[0]), np.mean(mask_index[1])
