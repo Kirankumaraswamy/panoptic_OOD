@@ -24,6 +24,7 @@ import random
 import io
 import cv2
 from torchvision.transforms import Resize
+import json
 
 
 
@@ -84,6 +85,7 @@ class CityscapesOOD(Dataset):
     color_palette_train_ids = [(0, 0, 0) for i in range(256)]
     label_to_id = {}
     label_to_train_id = {}
+    id_to_train_id = {}
 
     for i in range(len(labels)):
         if labels[i].ignore_in_eval and labels[i].train_id not in ignore_in_eval_ids:
@@ -92,6 +94,8 @@ class CityscapesOOD(Dataset):
         label_ids.append(labels[i].id)
         label_to_id[labels[i].name] = labels[i].id
         label_to_train_id[labels[i].name] = labels[i].train_id
+        id_to_train_id[labels[i].id] = labels[i].train_id
+
         if labels[i].train_id not in ignore_in_eval_ids:
             train_ids.append(labels[i].train_id)
             color_palette_train_ids[labels[i].train_id] = labels[i].color
@@ -117,14 +121,24 @@ class CityscapesOOD(Dataset):
         self.images = []
         self.targets = []
         self.predictions = []
-        if self.split == "train":
-            self.cityscapes_data_dicts = DatasetCatalog.get("cityscapes_fine_panoptic_train")
-        elif self.split == "test":
-            self.cityscapes_data_dicts = DatasetCatalog.get("cityscapes_fine_panoptic_test")
-        else:
-            self.cityscapes_data_dicts = DatasetCatalog.get("cityscapes_fine_panoptic_val")
 
-        # needed for panoptic training
+        self.cityscapes_data_dicts = []
+
+        self.json_file = os.path.join(self.root, "gtFine", "cityscapes_panoptic_" + self.split + ".json")
+        with open(self.json_file, 'r') as f:
+            self.cityscapes_data_dicts = json.load(f)["annotations"]
+
+        for dict in self.cityscapes_data_dicts:
+            image_id = dict["image_id"]
+            city_name = image_id.split("_")[0]
+            dict["sem_seg_file_name"] = os.path.join(self.root, "gtFine", self.split, city_name,
+                                                     image_id + "_gtFine_labelTrainIds.png")
+            dict["pan_seg_file_name"] = os.path.join(self.root, "gtFine", "cityscapes_panoptic_" + self.split,
+                                                     image_id + "_gtFine_panoptic.png")
+            dict["file_name"] = os.path.join(self.root, "leftImg8bit", self.split, city_name,
+                                             image_id + "_leftImg8bit.png")
+
+            # needed for panoptic training
         dataset_names = 'cityscapes_fine_panoptic_train'
         dataset_names = cfg.DATASETS.TRAIN
         meta = MetadataCatalog.get(dataset_names[0])
@@ -147,6 +161,10 @@ class CityscapesOOD(Dataset):
 
         target = []
         pan_seg_gt = utils.read_image(data["pan_seg_file_name"], "RGB")
+
+        # convert id into train IDs
+        for segments_info in data["segments_info"]:
+            segments_info['category_id'] = self.id_to_train_id[segments_info['category_id']]
 
         image, pan_seg_gt, data = self.add_random_mask(image, pan_seg_gt.copy(), data.copy())
 
@@ -256,12 +274,17 @@ class CityscapesOOD(Dataset):
             image = image * mask
 
             # add random pixel values to masked image Normalize(dataset.mean, dataset.std)
-            in_pixels = np.where(mask == 1)
-            ood_pixels = np.where(mask == 0)
-            ood_size = ood_pixels[0].size
-            random_pixels = np.random.randint(1, 255, ood_size)
-            mask[ood_pixels] = random_pixels
-            mask[in_pixels] = 0
+            in_pixels = np.where(mask[:,:,0] == 1)
+            ood_pixels = np.where(mask[:,:,0] == 0)
+            rgb_random = np.random.randint(0, 255, 3)
+            r_random_pixels = np.random.randint(max(0, rgb_random[0] - 20), min(255, rgb_random[0] + 20), ood_pixels[0].size)
+            g_random_pixels = np.random.randint(max(0, rgb_random[1] - 20), min(255, rgb_random[1] + 20), ood_pixels[0].size)
+            b_random_pixels = np.random.randint(max(0, rgb_random[2] - 20), min(255, rgb_random[2] + 20),ood_pixels[0].size)
+
+            mask[ood_pixels[0], ood_pixels[1], 0] = r_random_pixels
+            mask[ood_pixels[0], ood_pixels[1], 1] = g_random_pixels
+            mask[ood_pixels[0], ood_pixels[1], 2] = b_random_pixels
+            mask[in_pixels[0], in_pixels[1], :] = 0
             image = image + mask
 
             panoptic_rgb_mask = id2rgb(instance_id)
@@ -270,7 +293,7 @@ class CityscapesOOD(Dataset):
             pan_seg_gt[ood_pixels[0], ood_pixels[1], 2] = panoptic_rgb_mask[2]
 
             segment_info = {
-                "area": ood_size,
+                "area": ood_pixels[0].size,
                 "category_id": self.label_to_train_id["OOD"],
                 "id": instance_id,
                 "iscrowd": 0,
