@@ -25,6 +25,7 @@ from detectron2.utils.registry import Registry
 
 from .post_processing import get_panoptic_segmentation
 import matplotlib.pyplot as plt
+from scipy.stats import entropy
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -328,7 +329,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             # We use a single 5x5 DepthwiseSeparableConv2d to replace
             # 2 3x3 Conv2d since they have the same receptive field.
             self.ood_head = DepthwiseSeparableConv2d(
-                decoder_channels[0]+19,
+                decoder_channels[0],
                 head_channels,
                 kernel_size=5,
                 padding=2,
@@ -340,8 +341,8 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         else:
             self.head = nn.Sequential(
                 Conv2d(
-                    decoder_channels[0]+19,
-                    decoder_channels[0]+19,
+                    decoder_channels[0],
+                    decoder_channels[0],
                     kernel_size=3,
                     padding=1,
                     bias=use_bias,
@@ -349,7 +350,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
                     activation=F.relu,
                 ),
                 Conv2d(
-                    decoder_channels[0]+19,
+                    decoder_channels[0],
                     head_channels,
                     kernel_size=3,
                     padding=1,
@@ -389,10 +390,13 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         """
         semantic_y, ood_y = self.layers(features)
         if self.training:
-            sem_loss, prediction_mask = self.losses(semantic_y, targets, weights)
+            sem_loss, prediction_mask = self.losses(semantic_y, targets, weights, ood_masks)
             # calculate uncertainity loss
             ood_y = F.interpolate(
                 ood_y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+            )
+            semantic_y = F.interpolate(
+                semantic_y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
             )
 
             ood_y = ood_y.squeeze(dim=1)
@@ -427,11 +431,20 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         semantic_y = self.head(y)
         semantic_y = self.predictor(semantic_y)
 
-        ood_y = self.ood_head(torch.cat((y, semantic_y), 1))
+        ent = entropy(F.softmax(semantic_y, dim=1).detach().cpu().numpy(), axis=1) / np.log(19)
+        confidence = (ent - 1) * -1
+        confidence = torch.tensor(confidence).to(y.device)
+
+        '''plt.imshow(torch.squeeze(confidence).detach().cpu().numpy())
+        plt.show()'''
+
+        y = y * confidence
+
+        ood_y = self.ood_head(y)
         ood_y = self.ood_predictor(ood_y)
         return semantic_y, ood_y
 
-    def losses(self, predictions, targets, weights=None):
+    def losses(self, predictions, targets, weights=None, ood_mask=None):
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
@@ -439,7 +452,29 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         sem = torch.squeeze(torch.argmax(predictions, axis=1))
         '''plt.imshow(sem.detach().cpu().numpy())
         plt.show()'''
-        loss = self.loss(predictions, targets, weights)
+
+        ood_class = 19
+        num_classes = 19
+        pareto_alpha = 0.9
+        ignore_train_ind=255
+        targets_temp = torch.clone(targets)
+        targets[targets == ignore_train_ind] = num_classes + 1
+        enc = torch.eye(num_classes + 2)[targets][..., :-2]
+        enc[targets == num_classes] = torch.squeeze(torch.full((num_classes,1), (1.0 / num_classes)))
+        enc[targets_temp == ignore_train_ind] = torch.zeros(num_classes)
+        enc = enc.permute(0, 3, 1, 2).contiguous()
+
+        enc = enc.to(targets.device)
+
+        neg_log_like = - 1.0 * F.log_softmax(predictions, 1)
+        L = torch.mul(enc.float(), neg_log_like).sum(dim=1).contiguous().view(-1)
+        # L = L.mean()
+
+        top_k_pixels = int(0.2 * L.numel())
+        pixel_losses, _ = torch.topk(L, top_k_pixels)
+        loss = pixel_losses.mean()
+
+        #loss = self.loss(predictions, targets, weights)
         losses = {"loss_sem_seg": loss * self.loss_weight}
         return losses, sem_prediction_mask
 

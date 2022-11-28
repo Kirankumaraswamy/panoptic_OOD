@@ -99,7 +99,7 @@ class PanopticDeepLabTargetGenerator(object):
             if not (self.ignore_crowd_in_semantic and seg["iscrowd"]):
                 if ("is_ood" in seg and seg["is_ood"]) or cat_id == 19:
                     ood_mask[panoptic == seg["id"]] = 1
-                    semantic[panoptic == seg["id"]] = self.ignore_label
+                    semantic[panoptic == seg["id"]] = 19
                 else:
                     semantic[panoptic == seg["id"]] = cat_id
             if not seg["iscrowd"]:
