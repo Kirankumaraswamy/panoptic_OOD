@@ -438,7 +438,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         '''plt.imshow(torch.squeeze(confidence).detach().cpu().numpy())
         plt.show()'''
 
-        y = y * confidence
+        y = torch.permute(y.permute((1,0,2,3)) * confidence, (1,0,2,3))
 
         ood_y = self.ood_head(y)
         ood_y = self.ood_predictor(ood_y)
