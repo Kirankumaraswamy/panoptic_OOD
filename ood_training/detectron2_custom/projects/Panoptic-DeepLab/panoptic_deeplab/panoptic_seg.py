@@ -412,7 +412,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             u_loss = self.uncertainity_loss(ood_y, ood_target)
             u_loss = u_loss * ood_weights
             u_loss = u_loss.sum() / ood_weights.sum()
-            uncertainity_loss = {"uncertainity_loss": u_loss * 2.0}
+            uncertainity_loss = {"uncertainity_loss": u_loss * 1.0}
 
             '''plt.imshow(torch.squeeze(ood_y).detach().cpu().numpy())
             plt.show()'''
@@ -460,7 +460,8 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         targets_temp = torch.clone(targets)
         targets[targets == ignore_train_ind] = num_classes + 1
         enc = torch.eye(num_classes + 2)[targets][..., :-2]
-        enc[targets == num_classes] = torch.squeeze(torch.full((num_classes,1), (1.0 / num_classes)))
+        # add random loss instead of uniform in OOD pixels
+        enc[targets == num_classes] = torch.softmax(torch.rand(enc[targets == num_classes].size()), axis=-1)
         enc[targets_temp == ignore_train_ind] = torch.zeros(num_classes)
         enc = enc.permute(0, 3, 1, 2).contiguous()
 
