@@ -310,7 +310,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         nn.init.normal_(self.predictor.weight, 0, 0.001)
         nn.init.constant_(self.predictor.bias, 0)
 
-        self.BCE_loss = nn.BCELoss()
+        self.BCE_loss = nn.BCELoss(reduce=False, reduction="mean")
         if loss_type == "cross_entropy":
             self.loss = nn.CrossEntropyLoss(reduction="mean", ignore_index=ignore_value)
         elif loss_type == "hard_pixel_mining":
@@ -355,8 +355,19 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
-        '''sem = torch.squeeze(torch.argmax(predictions, axis=1))
-        plt.imshow(sem.detach().cpu().numpy())
+
+        '''sem = torch.argmax((predictions > 0.8)* 1.0, axis=1)
+        mask = torch.sum((predictions > 0.8) * 1.0, axis=1)
+        result = torch.ones_like(targets) * 19
+        result[mask==1] = sem[mask==1]
+
+        ood_mask = torch.ones_like(targets)
+        ood_mask[mask==1] = 0
+
+
+        plt.imshow(torch.squeeze(sem).detach().cpu().numpy())
+        plt.show()
+        plt.imshow(torch.squeeze(ood_mask).detach().cpu().numpy())
         plt.show()'''
 
         ood_class = 19
@@ -372,11 +383,16 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         enc = enc.permute(0, 3, 1, 2).contiguous()
 
         enc_target = enc.to(targets.device)
+        enc_weights = enc_target * 18
+        enc_weights[enc_weights==0] = 1
 
+        loss = self.BCE_loss(predictions, enc_target) * enc_weights
 
-        loss = self.BCE_loss(predictions, enc_target)
+        if enc_weights.sum() > 0:
+            loss = loss.sum() / enc_weights.sum()
+
         #loss = self.loss(predictions, targets, weights)
-        losses = {"loss_sem_seg": loss * 4.0}
+        losses = {"loss_sem_seg": loss * 5.0}
         return losses
 
 
