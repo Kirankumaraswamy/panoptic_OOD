@@ -267,6 +267,8 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         )
         assert self.decoder_only
 
+        self.top_k_percent_pixels = loss_top_k
+
         self.loss_weight = loss_weight
         use_bias = norm == ""
         # `head` is additional transform before predictor
@@ -356,8 +358,8 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
 
-        '''sem = torch.argmax((predictions > 0.8)* 1.0, axis=1)
-        mask = torch.sum((predictions > 0.8) * 1.0, axis=1)
+        '''sem = torch.argmax(predictions, axis=1)
+        mask = torch.sum((predictions > 0.5) * 1.0, axis=1)
         result = torch.ones_like(targets) * 19
         result[mask==1] = sem[mask==1]
 
@@ -386,13 +388,19 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         enc_weights = enc_target * 18
         enc_weights[enc_weights==0] = 1
 
-        loss = self.BCE_loss(predictions, enc_target) * enc_weights
+        weights = weights.repeat(1,19,1,1)
 
-        if enc_weights.sum() > 0:
-            loss = loss.sum() / enc_weights.sum()
+        pixel_losses = self.BCE_loss(predictions, enc_target) * weights
+        pixel_losses = pixel_losses.contiguous().view(-1)
+        if self.top_k_percent_pixels == 1.0:
+            pixel_losses = pixel_losses.mean()
+        else:
+            top_k_pixels = int(self.top_k_percent_pixels * pixel_losses.numel())
+            pixel_losses, _ = torch.topk(pixel_losses, top_k_pixels)
+            pixel_losses = pixel_losses.mean()
 
         #loss = self.loss(predictions, targets, weights)
-        losses = {"loss_sem_seg": loss * 5.0}
+        losses = {"loss_sem_seg": pixel_losses * 5.0}
         return losses
 
 
