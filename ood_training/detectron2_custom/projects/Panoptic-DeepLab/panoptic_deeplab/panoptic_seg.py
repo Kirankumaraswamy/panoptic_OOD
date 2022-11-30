@@ -1,6 +1,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import copy
-
 import numpy as np
 from typing import Callable, Dict, List, Union
 import fvcore.nn.weight_init as weight_init
@@ -115,22 +113,11 @@ class PanopticDeepLab(nn.Module):
                 weights = ImageList.from_tensors(weights, size_divisibility).tensor
             else:
                 weights = None
-
-            # OOD addition
-            if "ood_mask" in batched_inputs[0]:
-                ood_masks = [x["ood_mask"].to(self.device) for x in batched_inputs]
-                ood_masks = ImageList.from_tensors(
-                    ood_masks, size_divisibility
-                ).tensor
-            else:
-                ood_masks = None
         else:
             targets = None
             weights = None
-            ood_masks = None
-        sem_seg_results, (sem_seg_losses, uncertainity_loss) = self.sem_seg_head(features, targets, weights, ood_masks)
+        sem_seg_results, sem_seg_losses = self.sem_seg_head(features, targets, weights)
         losses.update(sem_seg_losses)
-        losses.update(uncertainity_loss)
 
         if "center" in batched_inputs[0] and "offset" in batched_inputs[0]:
             center_targets = [x["center"].to(self.device) for x in batched_inputs]
@@ -319,55 +306,11 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             )
             weight_init.c2_xavier_fill(self.head[0])
             weight_init.c2_xavier_fill(self.head[1])
-
-        self.predictor = Conv2d(head_channels, num_classes, kernel_size=1)
+        self.predictor = Conv2d(head_channels, num_classes, kernel_size=1, activation=F.sigmoid)
         nn.init.normal_(self.predictor.weight, 0, 0.001)
         nn.init.constant_(self.predictor.bias, 0)
 
-        # `head` is additional transform before predictor
-        if self.use_depthwise_separable_conv:
-            # We use a single 5x5 DepthwiseSeparableConv2d to replace
-            # 2 3x3 Conv2d since they have the same receptive field.
-            self.ood_head = DepthwiseSeparableConv2d(
-                decoder_channels[0],
-                head_channels,
-                kernel_size=5,
-                padding=2,
-                norm1=norm,
-                activation1=F.relu,
-                norm2=norm,
-                activation2=F.relu,
-            )
-        else:
-            self.head = nn.Sequential(
-                Conv2d(
-                    decoder_channels[0],
-                    decoder_channels[0],
-                    kernel_size=3,
-                    padding=1,
-                    bias=use_bias,
-                    norm=get_norm(norm, decoder_channels[0]),
-                    activation=F.relu,
-                ),
-                Conv2d(
-                    decoder_channels[0],
-                    head_channels,
-                    kernel_size=3,
-                    padding=1,
-                    bias=use_bias,
-                    norm=get_norm(norm, head_channels),
-                    activation=F.relu,
-                ),
-            )
-            weight_init.c2_xavier_fill(self.head[0])
-            weight_init.c2_xavier_fill(self.head[1])
-
-        self.ood_predictor = Conv2d(head_channels, 1, kernel_size=1, activation=F.sigmoid)
-        nn.init.normal_(self.ood_predictor.weight, 0, 0.001)
-        nn.init.constant_(self.ood_predictor.bias, 0)
-
-        self.uncertainity_loss = nn.MSELoss(reduction="none")
-
+        self.BCE_loss = nn.BCELoss()
         if loss_type == "cross_entropy":
             self.loss = nn.CrossEntropyLoss(reduction="mean", ignore_index=ignore_value)
         elif loss_type == "hard_pixel_mining":
@@ -382,42 +325,15 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         ret["loss_top_k"] = cfg.MODEL.SEM_SEG_HEAD.LOSS_TOP_K
         return ret
 
-    def forward(self, features, targets=None, weights=None, ood_masks=None):
+    def forward(self, features, targets=None, weights=None):
         """
         Returns:
             In training, returns (None, dict of losses)
             In inference, returns (CxHxW logits, {})
         """
-        semantic_y, ood_y = self.layers(features)
+        y = self.layers(features)
         if self.training:
-            sem_loss, prediction_mask = self.losses(semantic_y, targets, weights, ood_masks)
-            # calculate uncertainity loss
-            ood_y = F.interpolate(
-                ood_y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
-            )
-            semantic_y = F.interpolate(
-                semantic_y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
-            )
-
-            ood_y = ood_y.squeeze(dim=1)
-
-            ood_weights = torch.zeros_like(prediction_mask, dtype=torch.float32)
-            ood_target = torch.ones_like(prediction_mask, dtype=torch.float32)
-            ood_target[prediction_mask] = 0
-
-            # consider non void semantic predictions and then OOD pixels for loss calculation
-            ood_weights[targets != 255] = 1
-            ood_weights[ood_masks == 1] = 1
-
-            u_loss = self.uncertainity_loss(ood_y, ood_target)
-            u_loss = u_loss * ood_weights
-            u_loss = u_loss.sum() / ood_weights.sum()
-            uncertainity_loss = {"uncertainity_loss": u_loss * 1.0}
-
-            '''plt.imshow(torch.squeeze(ood_y).detach().cpu().numpy())
-            plt.show()'''
-
-            return None, (sem_loss, uncertainity_loss)
+            return None, self.losses(y, targets, weights)
         else:
             y = F.interpolate(
                 y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
@@ -427,57 +343,41 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
     def layers(self, features):
         assert self.decoder_only
         y = super().layers(features)
+        y = self.head(y)
+        y = self.predictor(y)
 
-        semantic_y = self.head(y)
-        semantic_y = self.predictor(semantic_y)
-
-        ent = entropy(F.softmax(semantic_y, dim=1).detach().cpu().numpy(), axis=1) / np.log(19)
-        confidence = (ent - 1) * -1
-        confidence = torch.tensor(confidence).to(y.device)
-
-        '''plt.imshow(torch.squeeze(confidence).detach().cpu().numpy())
+        '''ent = entropy(F.softmax(y, dim=1).detach().cpu().numpy(), axis=1) / np.log(19)
+        plt.imshow(torch.squeeze(ent).detach().cpu().numpy())
         plt.show()'''
+        return y
 
-        y = torch.permute(y.permute((1,0,2,3)) * confidence, (1,0,2,3))
-
-        ood_y = self.ood_head(y)
-        ood_y = self.ood_predictor(ood_y)
-        return semantic_y, ood_y
-
-    def losses(self, predictions, targets, weights=None, ood_mask=None):
+    def losses(self, predictions, targets, weights=None):
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
-        sem_prediction_mask = (torch.argmax(predictions, axis=1) == targets)
-        sem = torch.squeeze(torch.argmax(predictions, axis=1))
-        '''plt.imshow(sem.detach().cpu().numpy())
+        '''sem = torch.squeeze(torch.argmax(predictions, axis=1))
+        plt.imshow(sem.detach().cpu().numpy())
         plt.show()'''
 
         ood_class = 19
         num_classes = 19
         pareto_alpha = 0.9
-        ignore_train_ind=255
+        ignore_train_ind = 255
         targets_temp = torch.clone(targets)
         targets[targets == ignore_train_ind] = num_classes + 1
         enc = torch.eye(num_classes + 2)[targets][..., :-2]
         # add random loss instead of uniform in OOD pixels
-        enc[targets == num_classes] = torch.softmax(torch.rand(enc[targets == num_classes].size()), axis=-1)
+        enc[targets == num_classes] = torch.zeros(num_classes)
         enc[targets_temp == ignore_train_ind] = torch.zeros(num_classes)
         enc = enc.permute(0, 3, 1, 2).contiguous()
 
-        enc = enc.to(targets.device)
+        enc_target = enc.to(targets.device)
 
-        neg_log_like = - 1.0 * F.log_softmax(predictions, 1)
-        L = torch.mul(enc.float(), neg_log_like).sum(dim=1).contiguous().view(-1)
-        # L = L.mean()
 
-        top_k_pixels = int(0.2 * L.numel())
-        pixel_losses, _ = torch.topk(L, top_k_pixels)
-        loss = pixel_losses.mean()
-
+        loss = self.BCE_loss(predictions, enc_target)
         #loss = self.loss(predictions, targets, weights)
-        losses = {"loss_sem_seg": loss * self.loss_weight}
-        return losses, sem_prediction_mask
+        losses = {"loss_sem_seg": loss * 4.0}
+        return losses
 
 
 def build_ins_embed_branch(cfg, input_shape):
@@ -675,9 +575,6 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
-        '''plt.imshow(torch.squeeze(predictions).detach().cpu().numpy())
-        plt.show()'''
-
         loss = self.center_loss(predictions, targets) * weights
         if weights.sum() > 0:
             loss = loss.sum() / weights.sum()
