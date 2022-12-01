@@ -166,7 +166,7 @@ class CityscapesOOD(Dataset):
         for segments_info in data["segments_info"]:
             segments_info['category_id'] = self.id_to_train_id[segments_info['category_id']]
 
-        image, pan_seg_gt, data = self.add_random_mask(image, pan_seg_gt.copy(), data.copy())
+        #image, pan_seg_gt, data = self.add_random_mask(image, pan_seg_gt.copy(), data.copy())
 
         # Reuses semantic transform for panoptic labels.
         aug_input = T.AugInput(image, sem_seg=pan_seg_gt)
@@ -189,8 +189,9 @@ class CityscapesOOD(Dataset):
         plt.imshow(target["center"].numpy())
         plt.show()'''
         data["image"] = image
-        data["height"] = 1024
-        data["width"] = 2048
+        c,h,w =image.size()
+        data["height"] = h
+        data["width"] = w
         return data, target
 
     def __len__(self) -> int:
