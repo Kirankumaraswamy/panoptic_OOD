@@ -475,7 +475,7 @@ def panoptic_process(inputs, outputs, evaluate_ood):
         input = inputs[i]
         output = outputs[i]
         panoptic_img, segments_info = output["panoptic_seg"]
-        panoptic_img = panoptic_img.cpu().numpy()
+        panoptic_img = panoptic_img.cpu().numpy().squeeze()
 
         if segments_info is None:
             # If "segments_info" is None, we assume "panoptic_img" is a
@@ -516,7 +516,7 @@ def panoptic_process(inputs, outputs, evaluate_ood):
 
         if evaluate_ood:
             panoptic_img_ood, segments_info_ood = output["panoptic_seg_ood"]
-            panoptic_img_ood = panoptic_img_ood.cpu().numpy()
+            panoptic_img_ood = panoptic_img_ood.cpu().numpy().squeeze()
             # for OOD prediction
             if segments_info_ood is None:
                 # If "segments_info" is None, we assume "panoptic_img" is a
