@@ -294,7 +294,7 @@ def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, cate
                     'area'] - intersection - gt_pred_map_ood.get(
                     (VOID, pred_label_ood), 0)
                 iou = intersection / union
-                if iou > 0.5:
+                if iou > 0.5 and gt_label in matched_ious:
                     gt_matched_ood.add(gt_label)
                     pred_matched_ood.add(pred_label_ood)
                     matched_catagory_id_ood.append(gt_segms[gt_label]['category_id'])
