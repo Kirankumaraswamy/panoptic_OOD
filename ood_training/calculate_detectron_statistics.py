@@ -54,7 +54,7 @@ def build_sem_seg_train_aug(cfg):
         augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
 
     augs.append(T.RandomFlip())
-    return augs
+    return []
 
 
 def panoptic_deep_lab_val_collate(batch):
@@ -92,14 +92,12 @@ def calculate_statistics(args, network, dataset_cfg):
     dataset_train = CityscapesOOD(root=config.cityscapes_ood_path, split=config.split, cfg=dataset_cfg,
                                   transform=build_sem_seg_train_aug(dataset_cfg))
 
-    train_sampler = DistributedSampler(dataset_train, num_replicas=comm.get_world_size(), rank=comm.get_rank())
-
     start = time.time()
     # network = torch.nn.DataParallel(network).cuda()
     network = network.cuda()
 
     dataloader_train = DataLoader(dataset_train, batch_size=config.batch_size, shuffle=False,
-                                  collate_fn=panoptic_deep_lab_collate, num_workers=0, sampler=train_sampler)
+                                  collate_fn=panoptic_deep_lab_collate, num_workers=0)
     network.eval()
 
     pred_list = None
@@ -122,8 +120,8 @@ def calculate_statistics(args, network, dataset_cfg):
         plt.show()
         plt.imshow(torch.squeeze(x[0]["ood_mask"]).detach().cpu().numpy())
         plt.show()'''
-
-        output = network(x)
+        with torch.no_grad():
+            output = network(x)
 
         outputs = output[0]['sem_seg']
 
@@ -147,6 +145,7 @@ def calculate_statistics(args, network, dataset_cfg):
         else:
             pred_list = torch.cat((pred_list, outputs.cpu()), 0)
             target_list = torch.cat((target_list, x[0]["sem_seg"].unsqueeze(dim=0)), 0)
+
         del outputs, output
         torch.cuda.empty_cache()
         print("batch: ", i)
@@ -160,14 +159,16 @@ def calculate_statistics(args, network, dataset_cfg):
 
     class_probabilities = []
     mean_dict, var_dict = {}, {}
+
+
     for c in range(19):
         correct_pred = target_list == prediction
         class_pred = prediction == c
 
         correct_class_pred = torch.logical_and(correct_pred, class_pred)
-        class_mask = pred_list[:,:,:,c][correct_class_pred]
+        class_mask = pred_list[correct_class_pred].sum(axis=1)
 
-        print("class: ", class_mask, ", pixels considered:  ", correct_class_pred.sum())
+        print("class: ", c, ", pixels considered:  ", correct_class_pred.sum())
 
         class_probabilities.append(class_mask)
 
@@ -181,6 +182,29 @@ def calculate_statistics(args, network, dataset_cfg):
     print(f"class var: {var_dict}")
     np.save(f'./stats/cityscapes_{model_name}_mean.npy', mean_dict)
     np.save(f'./stats/cityscapes_{model_name}_var.npy', var_dict)
+
+
+    '''for c in range(19):
+        correct_pred = target_list == prediction
+        class_pred = prediction == c
+
+        correct_class_pred = torch.logical_and(correct_pred, class_pred)
+        class_mask = pred_list[:,:,:,c][correct_class_pred]
+
+        print("class: ", c, ", pixels considered:  ", correct_class_pred.sum())
+
+        class_probabilities.append(class_mask)
+
+        mean = class_probabilities[c].mean(dim=0)
+        var = class_probabilities[c].var(dim=0)
+
+        mean_dict[c] = mean.item()
+        var_dict[c] = var.item()
+
+    print(f"class mean: {mean_dict}")
+    print(f"class var: {var_dict}")
+    np.save(f'./stats/cityscapes_{model_name}_mean.npy', mean_dict)
+    np.save(f'./stats/cityscapes_{model_name}_var.npy', var_dict)'''
 
 
 

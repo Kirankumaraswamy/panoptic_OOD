@@ -88,7 +88,7 @@ def semantic_process(inputs, outputs, evaluate_ood):
 
         if evaluate_ood:
             pred_filename_ood = os.path.join(working_dir.name, basename + "_pred_ood.png")
-            output_ood = out["sem_seg_ood"].numpy()
+            output_ood = out["sem_seg_ood"].detach().cpu().numpy()
             pred_ood = np.zeros(output_ood.shape, dtype=np.uint8)
             for train_id, label in trainId2label.items():
                 if label.ignoreInEval and not label.name == "OOD":
@@ -109,7 +109,7 @@ def anomaly_process(inputs, outputs):
         pred_filename = os.path.join(anomaly_working_dir.name, basename + "_pred")
 
         # output["sem_seg"].argmax(dim=0).cpu().numpy()
-        output = output["anomaly_score"].numpy()
+        output = output["anomaly_score"].cpu().numpy()
         np.save(pred_filename, output)
         del output
     del outputs
@@ -675,7 +675,8 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
 
     for count, inputs in enumerate(dataloader):
         print("count: ", count)
-        logits = estimator(inputs)
+        with torch.no_grad():
+            logits = estimator(inputs)
 
         semantic_process(inputs, logits, evaluate_ood)
         if evaluate_ood and "anomaly_score" in logits[0].keys():
@@ -689,6 +690,9 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
             instance_process(inputs, logits)
         del logits
         torch.cuda.empty_cache()
+
+        if count == 20:
+            break
 
 
     gt_path = evaluation_dataset.root
