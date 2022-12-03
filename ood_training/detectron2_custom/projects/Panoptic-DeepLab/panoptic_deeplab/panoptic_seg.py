@@ -427,14 +427,15 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         targets_temp = torch.clone(targets)
         targets[targets == ignore_train_ind] = num_classes + 1
         enc = torch.eye(num_classes + 2)[targets][..., :-2]
-        # add random loss instead of uniform in OOD pixels
-        enc[targets == num_classes] = torch.zeros(num_classes)
-        enc[targets_temp == ignore_train_ind] = torch.zeros(num_classes)
+        #enc[targets == num_classes] = torch.zeros(num_classes)
+        #enc[targets_temp == ignore_train_ind] = torch.zeros(num_classes)
         enc = enc.permute(0, 3, 1, 2).contiguous()
 
         enc_target = enc.to(targets.device)
         #enc_weights = enc_target * 1
         #enc_weights[enc_weights==0] = 1
+        weights[targets_temp == ood_class] = 0
+        weights[targets_temp == ignore_train_ind] = 0
 
         weights = weights.repeat(1,19,1,1)
 
