@@ -161,7 +161,12 @@ class PanopticDeepLab(nn.Module):
             o = sem_seg_postprocess(offset_result, image_size, height, width)
 
             sem = r.argmax(dim=0, keepdim=True)
-            if hasattr(self, "class_mean") and hasattr(self, "class_var"):
+            if hasattr(self, "evaluate_ood"):
+                evaluate_ood = self.evaluate_ood
+            else:
+                evaluate_ood = False
+
+            if evaluate_ood and hasattr(self, "class_mean") and hasattr(self, "class_var"):
                 if self.class_mean is None or self.class_var is None:
                     raise Exception("Class mean and var are not set!")
                 sum_val = r.sum(axis=0)
@@ -190,32 +195,36 @@ class PanopticDeepLab(nn.Module):
                 top_k=self.top_k,
             )
 
-            # Post-processing to get OOD panoptic segmentation.
-            panoptic_image_ood, _ = get_panoptic_segmentation(
-                sem_out,
-                c,
-                o,
-                thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
-                label_divisor=self.meta.label_divisor,
-                stuff_area=self.stuff_area,
-                void_label=-1,
-                threshold=self.threshold,
-                nms_kernel=self.nms_kernel,
-                top_k=self.top_k,
-            )
+            if evaluate_ood:
+                # Post-processing to get OOD panoptic segmentation.
+                panoptic_image_ood, _ = get_panoptic_segmentation(
+                    sem_out,
+                    c,
+                    o,
+                    thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
+                    label_divisor=self.meta.label_divisor,
+                    stuff_area=self.stuff_area,
+                    void_label=-1,
+                    threshold=self.threshold,
+                    nms_kernel=self.nms_kernel,
+                    top_k=self.top_k,
+                )
 
             # For semantic segmentation evaluation.
             processed_results.append({"sem_seg": torch.squeeze(sem)})
-            processed_results[0]["sem_seg_ood"] = torch.squeeze(sem_out)
             processed_results[0]["sem_score"] = r
-            processed_results[0]["anomaly_score"] = torch.squeeze(anomaly_score)
             processed_results[0]["centre_score"] = c
             processed_results[0]["offset_score"] = o
             panoptic_image = panoptic_image.squeeze(0)
             semantic_prob = F.softmax(r, dim=0)
             # For panoptic segmentation evaluation.
             processed_results[-1]["panoptic_seg"] = (panoptic_image, None)
-            processed_results[-1]["panoptic_seg_ood"] = (panoptic_image_ood, None)
+
+            if evaluate_ood:
+                processed_results[0]["sem_seg_ood"] = torch.squeeze(sem_out)
+                processed_results[0]["anomaly_score"] = torch.squeeze(anomaly_score)
+                panoptic_image_ood = panoptic_image_ood.squeeze(0)
+                processed_results[-1]["panoptic_seg_ood"] = (panoptic_image_ood, None)
             # For instance segmentation evaluation.
             if self.predict_instances:
                 instances = []
@@ -397,36 +406,18 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
 
-        sum_val = predictions.sum(axis=1)
+        '''sum_val = predictions.sum(axis=1)
         sem = torch.argmax(predictions, axis=1)
 
         for c in range(19):
             sum_val = torch.where(sem == c,
                                         (sum_val - self.class_mean[c]) / np.sqrt(self.class_var[c]),
                                         sum_val)
-        sum_val = torch.absolute(sum_val)
-
-        '''mask = torch.sum((predictions > 0.95) * 1.0, axis=1)
-
-        ood_mask = torch.ones_like(targets)
-        ood_mask[mask==1] = 0
-
-
-        plt.imshow(torch.squeeze(sem).detach().cpu().numpy())
-        plt.show()
-        plt.imshow(torch.squeeze(ood_mask).detach().cpu().numpy())
-        plt.show()'''
-
-        '''new_ood_mask = torch.zeros_like(targets)
-        new_ood_mask[sum_val > 0.2] = 1
-        new_ood_mask[sum_val < -0.5] = 1
-
-        plt.imshow(torch.squeeze(new_ood_mask).detach().cpu().numpy())
-        plt.show()'''
+        sum_val = torch.absolute(sum_val)        
 
         normalized_sum_val  = torch.absolute(sum_val) / torch.absolute(sum_val).max()
         plt.imshow(torch.squeeze(normalized_sum_val).detach().cpu().numpy())
-        plt.show()
+        plt.show()'''
 
 
         ood_class = 19
@@ -442,8 +433,8 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         enc = enc.permute(0, 3, 1, 2).contiguous()
 
         enc_target = enc.to(targets.device)
-        enc_weights = enc_target * 1
-        enc_weights[enc_weights==0] = 1
+        #enc_weights = enc_target * 1
+        #enc_weights[enc_weights==0] = 1
 
         weights = weights.repeat(1,19,1,1)
 

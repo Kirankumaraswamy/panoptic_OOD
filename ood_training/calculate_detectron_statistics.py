@@ -105,7 +105,7 @@ def calculate_statistics(args, network, dataset_cfg):
     max_class_mean = {}
     print("Calculating statistics...")
 
-    model_name = "panoptic_deeplab"
+    statistics_file_name = config.statistics_file_name
 
     for i, (x, target) in enumerate(dataloader_train):
         # print("Train : len of data loader: ", len(dataloader_train), comm.get_rank())
@@ -123,7 +123,7 @@ def calculate_statistics(args, network, dataset_cfg):
         with torch.no_grad():
             output = network(x)
 
-        outputs = output[0]['sem_seg']
+        outputs = output[0]['sem_score']
 
         '''sem = outputs.argmax(dim=0)
         mask = torch.sum((outputs > 0.5) * 1.0, axis=0)
@@ -153,12 +153,15 @@ def calculate_statistics(args, network, dataset_cfg):
         if i % 200 == 199 or i == len(dataloader_train) - 1:
             break
 
-
     pred_list = pred_list.permute(0, 2, 3, 1)
     pred_score, prediction = pred_list.max(3)
 
-    class_probabilities = []
-    mean_dict, var_dict = {}, {}
+    class_sum_all_probabilities = []
+    correct_class_probabilities = []
+    non_class_probabilities = []
+    mean_sum_all_dict, var_sum_all_dict = {}, {}
+    mean_sum_non_class_dict, var_sum_non_class_dict = {}, {}
+    mean_class_dict, var_class_dict = {}, {}
 
 
     for c in range(19):
@@ -166,54 +169,45 @@ def calculate_statistics(args, network, dataset_cfg):
         class_pred = prediction == c
 
         correct_class_pred = torch.logical_and(correct_pred, class_pred)
-        class_mask = pred_list[correct_class_pred].sum(axis=1)
-
         print("class: ", c, ", pixels considered:  ", correct_class_pred.sum())
 
-        class_probabilities.append(class_mask)
+        sum_all_probabilities = pred_list[correct_class_pred].sum(axis=1)
+        class_sum_all_probabilities.append(sum_all_probabilities)
+        mean_sum_all_dict[c] = class_sum_all_probabilities[c].mean(dim=0).item()
+        var_sum_all_dict[c] = class_sum_all_probabilities[c].var(dim=0).item()
 
-        mean = class_probabilities[c].mean(dim=0)
-        var = class_probabilities[c].var(dim=0)
+        right_probabilities = pred_list[correct_class_pred][:, c]
+        correct_class_probabilities.append(right_probabilities)
+        mean_class_dict[c] = correct_class_probabilities[c].mean().item()
+        var_class_dict[c] = correct_class_probabilities[c].var().item()
 
-        mean_dict[c] = mean.item()
-        var_dict[c] = var.item()
-
-    print(f"class mean: {mean_dict}")
-    print(f"class var: {var_dict}")
-    np.save(f'./stats/cityscapes_{model_name}_mean.npy', mean_dict)
-    np.save(f'./stats/cityscapes_{model_name}_var.npy', var_dict)
-
-
-    '''for c in range(19):
-        correct_pred = target_list == prediction
-        class_pred = prediction == c
-
-        correct_class_pred = torch.logical_and(correct_pred, class_pred)
-        class_mask = pred_list[:,:,:,c][correct_class_pred]
-
-        print("class: ", c, ", pixels considered:  ", correct_class_pred.sum())
-
-        class_probabilities.append(class_mask)
-
-        mean = class_probabilities[c].mean(dim=0)
-        var = class_probabilities[c].var(dim=0)
-
-        mean_dict[c] = mean.item()
-        var_dict[c] = var.item()
-
-    print(f"class mean: {mean_dict}")
-    print(f"class var: {var_dict}")
-    np.save(f'./stats/cityscapes_{model_name}_mean.npy', mean_dict)
-    np.save(f'./stats/cityscapes_{model_name}_var.npy', var_dict)'''
+        sum_non_class_probabilities = sum_all_probabilities - right_probabilities
+        non_class_probabilities.append(sum_non_class_probabilities)
+        mean_sum_non_class_dict[c] = non_class_probabilities[c].mean().item()
+        var_sum_non_class_dict[c] = non_class_probabilities[c].var().item()
 
 
+    print(f"sum all class mean: {mean_sum_all_dict}")
+    print(f"sum all class var: {var_sum_all_dict}")
+    print("======================")
+    print(f"correct class mean: {mean_class_dict}")
+    print(f"correct class var: {var_class_dict}")
+    print("======================")
+    print(f"sum all non class mean: {mean_sum_non_class_dict}")
+    print(f"sum all non class var: {var_sum_non_class_dict}")
+    print("======================")
 
+    np.save(f'./stats/sum_all_{statistics_file_name}_mean.npy', mean_sum_all_dict)
+    np.save(f'./stats/sum_all_{statistics_file_name}_var.npy', var_sum_all_dict)
+    np.save(f'./stats/correct_class_{statistics_file_name}_mean.npy', mean_sum_all_dict)
+    np.save(f'./stats/correct_class_{statistics_file_name}_var.npy', var_sum_all_dict)
+    np.save(f'./stats/sum_non_class_{statistics_file_name}_mean.npy', mean_sum_all_dict)
+    np.save(f'./stats/sum_non_class_{statistics_file_name}_var.npy', var_sum_all_dict)
 
     end = time.time()
     hours, rem = divmod(end - start, 3600)
     minutes, seconds = divmod(rem, 60)
-    if comm.is_main_process():
-        print("FINISHED {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
+    print("FINISHED {:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds))
 
 
 def main(args):

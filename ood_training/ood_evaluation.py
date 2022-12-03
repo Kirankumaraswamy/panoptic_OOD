@@ -158,7 +158,7 @@ def evaluate(args):
     net.threshold = ood_config.threshold
     detector = AnomalyDetector(net)
     result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds,
-                           collate_fn=panoptic_deep_lab_collate, evaluate_ood=False, semantic_only=False)
+                           collate_fn=panoptic_deep_lab_collate, evaluate_ood=True, semantic_only=False)
     print("====================================================")
     print(result)
 
