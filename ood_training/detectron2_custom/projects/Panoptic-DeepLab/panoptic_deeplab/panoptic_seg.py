@@ -436,7 +436,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         #enc_weights[enc_weights==0] = 1
         weights[targets_temp == ood_class] = 0
         weights[targets_temp == ignore_train_ind] = 0
-
+        weights = weights.unsqueeze(dim=1)
         weights = weights.repeat(1,19,1,1)
 
         pixel_losses = self.BCE_loss(predictions, enc_target) * weights
