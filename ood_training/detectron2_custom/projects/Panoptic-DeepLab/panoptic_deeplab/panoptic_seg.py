@@ -505,7 +505,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             ood_pixel_losses, _ = torch.topk(ood_pixel_losses, top_k_pixels)
             ood_pixel_losses = ood_pixel_losses.mean()
 
-        sem_loss = self.loss(predictions, targets, weights)
+        sem_loss = self.loss(predictions, targets_temp, weights)
         losses = {"loss_sem_seg": sem_loss * self.loss_weight, "loss_uncertainity":  ood_pixel_losses}
         return losses
 
