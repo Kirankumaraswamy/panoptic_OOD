@@ -37,8 +37,16 @@ from cityscapesscripts.helpers.labels import name2label, id2label, trainId2label
 
 import cityscapesscripts.evaluation.evalPixelLevelSemanticLabeling as cityscapes_eval
 import cityscapesscripts.helpers.labels as cityscapes_labels
+from tqdm import tqdm
+
+import warnings
+warnings.filterwarnings('ignore')
 
 cityscapes_eval.args.avgClassSize["OOD"] = 3462.4756337644
+name2label["OOD"] = cityscapes_labels.labels[-1]
+id2label[50] = cityscapes_labels.labels[-1]
+trainId2label[19] = cityscapes_labels.labels[-1]
+category2labels["OOD"] = [cityscapes_labels.labels[-1]]
 
 working_dir = None
 instance_working_dir = None
@@ -83,7 +91,7 @@ def semantic_process(inputs, outputs, evaluate_ood):
         pred = np.zeros(output.shape, dtype=np.uint8)
 
         for train_id, label in trainId2label.items():
-            if label.ignoreInEval:
+            if label.ignoreInEval and not label.name=="OOD":
                 continue
             pred[output == train_id] = label.id
         Image.fromarray(pred).save(pred_filename)
@@ -606,8 +614,7 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
     instance_working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_instance_eval_")
     anomaly_working_dir = tempfile.TemporaryDirectory(prefix="cityscapes_anomaly_eval_")
 
-    for count, inputs in enumerate(dataloader):
-        print("count: ", count)
+    for count, inputs in enumerate(tqdm(dataloader)):
         with torch.no_grad():
             logits = estimator(inputs)
 

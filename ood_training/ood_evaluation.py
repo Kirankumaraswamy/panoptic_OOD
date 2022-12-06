@@ -70,16 +70,14 @@ class AnomalyDetector():
         image_save_path = os.path.join(image_save_dir, image[0]["image_id"] + ".png")
 
         fig = plt.figure(figsize=(20, 14))
-        rows = 3
+        rows = 2
         columns = 3
         images = []
         img1 = np.array(image[0]["real_image"])
 
         img2 = output[0]["sem_seg"].detach().cpu().squeeze().numpy()
 
-        img3 = output[0]["sem_seg_ood"].detach().cpu().squeeze().numpy()
-
-        img4 = output[0]["anomaly_score"].detach().cpu().squeeze().numpy()
+        img3 = output[0]["anomaly_score"].detach().cpu().squeeze().numpy()
 
         pan_img = output[0]["panoptic_seg"][0].detach().cpu().squeeze().numpy()
 
@@ -93,41 +91,17 @@ class AnomalyDetector():
                     mask = np.where(pan_img == segmentId)
                     color = [segmentId % 256, segmentId // 256, segmentId // 256 // 256]
                     pan_format[mask] = color
-        img5 = pan_format
+        img4 = pan_format
 
-        img6 = output[0]["centre_score"].detach().cpu().squeeze().numpy()
-
-        pan_img_ood = output[0]["panoptic_seg_ood"][0].detach().cpu().squeeze().numpy()
-
-        segment_ids = np.unique(pan_img_ood)
-        pan_format_ood = np.zeros(img1.shape, dtype="uint8")
-        for segmentId in segment_ids:
-            if segmentId > 1000:
-                semanticId = segmentId // 1000
-                labelInfo = trainId2label[semanticId]
-                if labelInfo.hasInstances:
-                    mask = np.where(pan_img_ood == segmentId)
-                    color = [segmentId % 256, segmentId // 256, segmentId // 256 // 256]
-                    pan_format_ood[mask] = color
-        img7 = pan_format_ood
-
-        ood_ids = [i for i in segment_ids if i >= 19000]
-        img8 = np.zeros(pan_img.shape)
-        for ood_id in ood_ids:
-            ood_mask = np.where(pan_img_ood == ood_id)
-            instance_count = ood_id % 19000
-            img8[ood_mask] = 1 + instance_count * 10
+        img5 = output[0]["centre_score"].detach().cpu().squeeze().numpy()
 
         images.append(img1)
         images.append(img2)
         images.append(img3)
         images.append(img4)
         images.append(img5)
-        images.append(img6)
-        images.append(img7)
-        images.append(img8)
 
-        for i in range(8):
+        for i in range(5):
             fig.add_subplot(rows, columns, i + 1)
             plt.imshow(images[i])
             plt.axis('off')
@@ -147,20 +121,49 @@ def evaluate(args):
 
     net = get_net()
 
-    class_mean = np.load(ood_config.class_mean_path, allow_pickle=True)
-    class_var = np.load(ood_config.class_var_path, allow_pickle=True)
+    net.sum_all_class_mean = np.load(ood_config.sum_all_class_mean_path, allow_pickle=True).item()
+    net.sum_all_class_var = np.load(ood_config.sum_all_class_var_path, allow_pickle=True).item()
+    net.correct_class_mean = np.load(ood_config.correct_class_mean_path, allow_pickle=True).item()
+    net.correct_class_var = np.load(ood_config.correct_class_var_path, allow_pickle=True).item()
+    net.evaluate_ood = True
 
-    transform = Compose([ToTensor(), Normalize(CityscapesOOD.mean, CityscapesOOD.std)])
-    ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split,
-                   transform=transform)
-    net.class_mean = class_mean.item()
-    net.class_var = class_var.item()
-    net.threshold = ood_config.threshold
-    detector = AnomalyDetector(net)
-    result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds,
-                           collate_fn=panoptic_deep_lab_collate, evaluate_ood=True, semantic_only=False)
-    print("====================================================")
-    print(result)
+    transform = None
+    thresholds = [0.02* i for i in range(0,4)]
+    #threshold = ood_config.threshold
+    specificity = []
+    sensitivity = []
+    gmean = []
+
+    for threshold in thresholds:
+        print("====================================================")
+        print("              Threshold: ", threshold)
+        print("====================================================")
+
+        ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split,
+                       transform=transform)
+        net.ood_threshold = threshold
+        detector = AnomalyDetector(net)
+        result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds,
+                               collate_fn=panoptic_deep_lab_collate, batch_size=1, evaluate_ood=True, semantic_only=False)
+
+        print(result)
+        specificity.append(result['semantic_seg']['sem_seg']['uSpecificity'])
+        sensitivity.append(result['semantic_seg']['sem_seg']['uSensitivity'])
+        gmean.append(result['semantic_seg']['sem_seg']['uGmean'])
+
+    if len(thresholds) > 1:
+        fig = plt.figure()
+        plt.plot(thresholds, specificity,  label="uSpecificity")
+        plt.plot(thresholds, sensitivity,  label="uSensitivity")
+        plt.plot(thresholds, gmean, label="uGmean")
+        plt.legend()
+        fig.savefig("./sensitivity_vs_specificity.png")
+
+    print("Thresholds: ", thresholds)
+    print("Gmean: ", gmean)
+    print('Usensitivity: ', sensitivity)
+    print("Uspecivicity: ", specificity)
+
 
 
 if __name__ == '__main__':
