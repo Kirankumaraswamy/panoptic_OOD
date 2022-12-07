@@ -120,10 +120,14 @@ def calculate_statistics(args, network, dataset_cfg):
         plt.show()
         plt.imshow(torch.squeeze(x[0]["ood_mask"]).detach().cpu().numpy())
         plt.show()'''
+        output_list = []
         with torch.no_grad():
-            output = network(x)
+            outputs = network(x)
 
-        outputs = output[0]['sem_score']
+        for output in outputs:
+            output_list.append(output['sem_score'])
+
+        a = 1
 
         '''sem = outputs.argmax(dim=0)
         mask = torch.sum((outputs > 0.5) * 1.0, axis=0)
@@ -138,19 +142,20 @@ def calculate_statistics(args, network, dataset_cfg):
         plt.imshow(torch.squeeze(ood_mask).detach().cpu().numpy())
         plt.show()'''
 
-        outputs = outputs.unsqueeze(dim=0)
-        if pred_list is None:
-            pred_list = outputs.data.cpu()
-            target_list = x[0]["sem_seg"].unsqueeze(dim=0)
-        else:
-            pred_list = torch.cat((pred_list, outputs.cpu()), 0)
-            target_list = torch.cat((target_list, x[0]["sem_seg"].unsqueeze(dim=0)), 0)
+
+        for index, output in enumerate(outputs):
+            if pred_list is None:
+                pred_list = output['sem_score'].cpu().unsqueeze(dim=0)
+                target_list = x[index]["sem_seg"].unsqueeze(dim=0)
+            else:
+                pred_list = torch.cat((pred_list, output['sem_score'].cpu().unsqueeze(dim=0)), 0)
+                target_list = torch.cat((target_list, x[index]["sem_seg"].unsqueeze(dim=0)), 0)
 
         del outputs, output
         torch.cuda.empty_cache()
         print("batch: ", i)
 
-        if i % 200 == 199 or i == len(dataloader_train) - 1:
+        if i % 50 == 0 or i == len(dataloader_train) - 1:
             break
 
     pred_list = pred_list.permute(0, 2, 3, 1)
