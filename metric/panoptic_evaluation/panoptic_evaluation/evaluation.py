@@ -602,7 +602,7 @@ def data_load(root=None, split="val", transform=None):
     return datset
 
 
-def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate_fn=None, evaluate_ood=True, semantic_only=False):
+def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate_fn=None, evaluate_ood=True, semantic_only=False, evaluate_anomoly=True):
     global working_dir, instance_working_dir, anomaly_working_dir
     dataloader = DataLoader(evaluation_dataset, batch_size=batch_size,
                             collate_fn=collate_fn)
@@ -619,7 +619,7 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
             logits = estimator(inputs)
 
         semantic_process(inputs, logits, evaluate_ood)
-        if evaluate_ood and "anomaly_score" in logits[0].keys():
+        if evaluate_anomoly and "anomaly_score" in logits[0].keys():
             anomaly_process(inputs, logits)
             has_anomoly = True
 
@@ -651,7 +651,7 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
         result["panotic_seg"] = panoptic_result
         result["instance_seg"] = instance_result
 
-    if evaluate_ood and has_anomoly:
+    if evaluate_anomoly and has_anomoly:
         anomoly_result = anomaly_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
         result["anomoly_result"] = anomoly_result
 
