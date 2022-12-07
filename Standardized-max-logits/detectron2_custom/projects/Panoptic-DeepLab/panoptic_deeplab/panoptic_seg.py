@@ -22,6 +22,7 @@ from detectron2.structures import BitMasks, ImageList, Instances
 from detectron2.utils.registry import Registry
 
 from .post_processing import get_panoptic_segmentation
+import matplotlib.pyplot as plt
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -161,7 +162,12 @@ class PanopticDeepLab(nn.Module):
             sem_out = r.argmax(dim=0, keepdim=True)
             anomaly_score = 0
 
-            if hasattr(self, "class_mean") and hasattr(self, "class_var"):
+            if hasattr(self, "evaluate_ood"):
+                evaluate_ood = self.evaluate_ood
+            else:
+                evaluate_ood = False
+
+            if evaluate_ood:
                 if self.class_mean is None or self.class_var is None:
                     raise Exception("Class mean and var are not set!")
                 anomaly_score, prediction = torch.unsqueeze(r, dim=0).detach().cpu().max(1)
@@ -172,9 +178,14 @@ class PanopticDeepLab(nn.Module):
 
                 anomaly_score = anomaly_score * -1
 
+                '''anom = torch.absolute(anomaly_score)
+                anom = torch.absolute(anom) / torch.absolute(anom).max()
+                plt.imshow(torch.squeeze(anom).detach().cpu().numpy())
+                plt.show()'''
+
                 prediction = prediction.cpu().numpy()
                 anomaly_score = anomaly_score.numpy()
-                prediction[np.where(anomaly_score > self.threshold)] = 19
+                prediction[np.where(anomaly_score > self.ood_threshold)] = 19
                 sem_out_ood = torch.tensor(prediction)
                 c = c.cpu()
                 o = o.cpu()
@@ -194,32 +205,34 @@ class PanopticDeepLab(nn.Module):
                 top_k=self.top_k,
             )
 
-            # Post-processing to get OOD panoptic segmentation.
-            panoptic_image_ood, _ = get_panoptic_segmentation(
-                sem_out_ood,
-                c,
-                o,
-                thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
-                label_divisor=self.meta.label_divisor,
-                stuff_area=self.stuff_area,
-                void_label=-1,
-                threshold=self.threshold,
-                nms_kernel=self.nms_kernel,
-                top_k=self.top_k,
-            )
+            if evaluate_ood:
+                # Post-processing to get OOD panoptic segmentation.
+                panoptic_image_ood, _ = get_panoptic_segmentation(
+                    sem_out_ood,
+                    c,
+                    o,
+                    thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
+                    label_divisor=self.meta.label_divisor,
+                    stuff_area=self.stuff_area,
+                    void_label=-1,
+                    threshold=self.threshold,
+                    nms_kernel=self.nms_kernel,
+                    top_k=self.top_k,
+                )
             # For semantic segmentation evaluation.
             processed_results.append({"sem_seg": torch.squeeze(sem_out)})
-            processed_results[0]["sem_seg_ood"] = torch.squeeze(sem_out_ood)
-            processed_results[0]["sem_score"] = r
-            processed_results[0]["anomaly_score"] = torch.squeeze(torch.tensor(anomaly_score))
-            processed_results[0]["centre_score"] = c
-            processed_results[0]["offset_score"] = o
+            processed_results[-1]["sem_score"] = r
+            processed_results[-1]["centre_score"] = c
+            processed_results[-1]["offset_score"] = o
             panoptic_image = panoptic_image.squeeze(0)
-            panoptic_image_ood = panoptic_image_ood.squeeze(0)
             semantic_prob = F.softmax(r, dim=0)
             # For panoptic segmentation evaluation.
             processed_results[-1]["panoptic_seg"] = (panoptic_image, None)
-            processed_results[-1]["panoptic_seg_ood"] = (panoptic_image_ood, None)
+            if evaluate_ood:
+                processed_results[-1]["anomaly_score"] = torch.squeeze(torch.tensor(anomaly_score))
+                processed_results[-1]["sem_seg_ood"] = torch.squeeze(sem_out_ood)
+                panoptic_image_ood = panoptic_image_ood.squeeze(0)
+                processed_results[-1]["panoptic_seg_ood"] = (panoptic_image_ood, None)
             # For instance segmentation evaluation.
             if self.predict_instances:
                 instances = []

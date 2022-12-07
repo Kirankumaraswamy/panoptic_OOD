@@ -1,10 +1,10 @@
 _BASE_: Base-PanopticDeepLab-OS16.yaml
 MODEL:
   WEIGHTS: "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
-  PIXEL_MEAN: [0, 0, 0]
-  PIXEL_STD: [1, 1, 1]
-  #PIXEL_MEAN: [ 123.675, 116.280, 103.530 ]
-  #PIXEL_STD: [ 58.395, 57.120, 57.375 ]
+  #PIXEL_MEAN: [0, 0, 0]
+  #PIXEL_STD: [1, 1, 1]
+  PIXEL_MEAN: [ 123.675, 116.280, 103.530 ]
+  PIXEL_STD: [ 58.395, 57.120, 57.375 ]
 
   BACKBONE:
     NAME: "build_resnet_deeplab_backbone"
