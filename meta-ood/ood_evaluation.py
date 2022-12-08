@@ -47,8 +47,8 @@ class AnomalyDetector():
             output[0]["sem_seg_ood"] = torch.tensor(sem_out_ood)
             output[0]["sem_seg"] = torch.tensor(sem_out)
 
-        '''plt.imshow(torch.squeeze(output[0]["anomaly_score"].detach().cpu()).numpy())
-        plt.show()'''
+        plt.imshow(torch.squeeze(output[0]["anomaly_score"].detach().cpu()).numpy())
+        plt.show()
        
         if ood_config.save_results:
             self.display_results(image, output)
@@ -157,7 +157,7 @@ def evaluate(args):
         network.evaluate_ood = ood_config.evaluate_ood
 
     transform = None
-    thresholds = [0.01 * i for i in range(0, 4)]
+    thresholds = [0.95, 0.96, 0.97, 0.98, 0.99, 1]
     #thresholds = [ood_config.ood_threshold]
     specificity = []
     sensitivity = []
@@ -191,6 +191,8 @@ def evaluate(args):
             plt.plot(thresholds, specificity, label="uSpecificity")
             plt.plot(thresholds, sensitivity, label="uSensitivity")
             plt.plot(thresholds, gmean, label="uGmean")
+            plt.xlabel("Threshold")
+            plt.ylabel("uGmean")
             plt.legend()
             fig.savefig("./sensitivity_vs_specificity.png")
 

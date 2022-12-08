@@ -219,6 +219,8 @@ def evaluate(args):
             plt.plot(thresholds, specificity,  label="uSpecificity")
             plt.plot(thresholds, sensitivity,  label="uSensitivity")
             plt.plot(thresholds, gmean, label="uGmean")
+            plt.xlabel("Threshold")
+            plt.ylabel("uGmean")
             plt.legend()
             fig.savefig("./sensitivity_vs_specificity.png")
 
