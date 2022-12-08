@@ -230,9 +230,9 @@ class PanopticDeepLab(nn.Module):
             processed_results[-1]["panoptic_seg"] = (panoptic_image, None)
             if evaluate_ood:
                 processed_results[-1]["anomaly_score"] = torch.squeeze(torch.tensor(anomaly_score))
-                processed_results[-1]["sem_seg_ood"] = torch.squeeze(sem_out_ood)
+                processed_results[-1]["sem_seg"] = torch.squeeze(sem_out_ood)
                 panoptic_image_ood = panoptic_image_ood.squeeze(0)
-                processed_results[-1]["panoptic_seg_ood"] = (panoptic_image_ood, None)
+                processed_results[-1]["panoptic_seg"] = (panoptic_image_ood, None)
             # For instance segmentation evaluation.
             if self.predict_instances:
                 instances = []

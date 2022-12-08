@@ -23,7 +23,6 @@ import matplotlib.pyplot as plt
 import ood_config
 
 ckpt_path = ood_config.init_ckpt
-threshold = ood_config.threshold
 config_file = ood_config.config_file
 
 
@@ -129,40 +128,46 @@ def evaluate(args):
 
     transform = None
     thresholds = [0.02* i for i in range(0,4)]
-    #threshold = ood_config.threshold
+    thresholds = [ood_config.ood_threshold]
     specificity = []
     sensitivity = []
     gmean = []
 
-    for threshold in thresholds:
-        print("====================================================")
-        print("              Threshold: ", threshold)
-        print("====================================================")
+    ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split,
+                   transform=transform)
 
-        ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split,
-                       transform=transform)
-        net.ood_threshold = threshold
+    for threshold in thresholds:
+        if ood_config.evaluate_ood:
+            print("====================================================")
+            print("              Threshold: ", threshold)
+            print("====================================================")
+
+
+            net.ood_threshold = threshold
         detector = AnomalyDetector(net)
         result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds,
-                               collate_fn=panoptic_deep_lab_collate, batch_size=1, evaluate_ood=True, semantic_only=False)
+                               collate_fn=panoptic_deep_lab_collate, batch_size=ood_config.batch_size,
+                               evaluate_ood=ood_config.evaluate_ood, semantic_only=ood_config.semantic_only,
+                               evaluate_anomoly = ood_config.evaluate_anomoly)
 
         print(result)
         specificity.append(result['semantic_seg']['sem_seg']['uSpecificity'])
         sensitivity.append(result['semantic_seg']['sem_seg']['uSensitivity'])
         gmean.append(result['semantic_seg']['sem_seg']['uGmean'])
 
-    if len(thresholds) > 1:
-        fig = plt.figure()
-        plt.plot(thresholds, specificity,  label="uSpecificity")
-        plt.plot(thresholds, sensitivity,  label="uSensitivity")
-        plt.plot(thresholds, gmean, label="uGmean")
-        plt.legend()
-        fig.savefig("./sensitivity_vs_specificity.png")
+    if ood_config.evaluate_ood:
+        if len(thresholds) > 1:
+            fig = plt.figure()
+            plt.plot(thresholds, specificity,  label="uSpecificity")
+            plt.plot(thresholds, sensitivity,  label="uSensitivity")
+            plt.plot(thresholds, gmean, label="uGmean")
+            plt.legend()
+            fig.savefig("./sensitivity_vs_specificity.png")
 
-    print("Thresholds: ", thresholds)
-    print("Gmean: ", gmean)
-    print('Usensitivity: ', sensitivity)
-    print("Uspecivicity: ", specificity)
+        print("Thresholds: ", thresholds)
+        print("Gmean: ", gmean)
+        print('Usensitivity: ', sensitivity)
+        print("Uspecivicity: ", specificity)
 
 
 

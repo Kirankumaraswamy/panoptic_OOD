@@ -599,12 +599,15 @@ if __name__ == '__main__':
     sensitivity = []
     gmean = []
 
+    ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split,
+                   transform=transform)
+
     for threshold in thresholds:
-        print("====================================================")
-        print("              Threshold: ", threshold)
-        print("====================================================")
-        ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split,
-                       transform=transform)
+        if ood_config.evaluate_ood:
+            print("====================================================")
+            print("              Threshold: ", threshold)
+            print("====================================================")
+
         detector = AnomalyDetector(True, ood_threshold=threshold)
         result = data_evaluate(estimator=detector.detectron_estimator_worker, evaluation_dataset=ds, batch_size=ood_config.batch_size,
                                collate_fn=panoptic_deep_lab_collate, evaluate_ood=ood_config.evaluate_ood, semantic_only=ood_config.semantic_only, evaluate_anomoly = ood_config.evaluate_anomoly)
@@ -614,16 +617,17 @@ if __name__ == '__main__':
         sensitivity.append(result['semantic_seg']['sem_seg']['uSensitivity'])
         gmean.append(result['semantic_seg']['sem_seg']['uGmean'])
 
-    if len(thresholds) > 1:
-        fig = plt.figure()
-        plt.plot(thresholds, specificity, label="uSpecificity")
-        plt.plot(thresholds, sensitivity, label="uSensitivity")
-        plt.plot(thresholds, gmean, label="uGmean")
-        plt.legend()
-        fig.savefig("./sensitivity_vs_specificity.png")
+    if ood_config.evaluate_ood:
+        if len(thresholds) > 1:
+            fig = plt.figure()
+            plt.plot(thresholds, specificity, label="uSpecificity")
+            plt.plot(thresholds, sensitivity, label="uSensitivity")
+            plt.plot(thresholds, gmean, label="uGmean")
+            plt.legend()
+            fig.savefig("./sensitivity_vs_specificity.png")
 
-    print("Thresholds: ", thresholds)
-    print("Gmean: ", gmean)
-    print('Usensitivity: ', sensitivity)
-    print("Uspecivicity: ", specificity)
+        print("Thresholds: ", thresholds)
+        print("Gmean: ", gmean)
+        print('Usensitivity: ', sensitivity)
+        print("Uspecivicity: ", specificity)
 

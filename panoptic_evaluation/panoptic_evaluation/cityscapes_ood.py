@@ -44,7 +44,7 @@ class CityscapesOOD(Dataset):
         else:
             image = utils.read_image(data["file_name"])
             real_image = image
-            #image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+            image = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
         data["height"] = image.shape[1]
         data["width"] = image.shape[2]
         data["image"] = image
