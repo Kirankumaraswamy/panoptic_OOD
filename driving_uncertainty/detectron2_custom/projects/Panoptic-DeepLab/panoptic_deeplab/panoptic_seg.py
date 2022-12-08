@@ -165,10 +165,17 @@ class PanopticDeepLab(nn.Module):
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
 
-            sem_out = r.argmax(dim=0, keepdim=True).cpu()
+
             anomaly_score = None
 
-            if hasattr(self, "synboost"):
+            if hasattr(self, "evaluate_ood"):
+                evaluate_ood = self.evaluate_ood
+            else:
+                evaluate_ood = False
+
+            if evaluate_ood:
+                sem_out = r.argmax(dim=0, keepdim=True).cpu()
+
                 softmax_out = F.softmax(r)
                 softmax_out_cpu = softmax_out.detach().cpu()
 
@@ -197,33 +204,37 @@ class PanopticDeepLab(nn.Module):
                 top_k=self.top_k,
             )
 
-            # Post-processing to get OOD panoptic segmentation.
-            panoptic_image_ood, _ = get_panoptic_segmentation(
-                sem_out_ood,
-                c,
-                o,
-                thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
-                label_divisor=self.meta.label_divisor,
-                stuff_area=self.stuff_area,
-                void_label=-1,
-                threshold=self.threshold,
-                nms_kernel=self.nms_kernel,
-                top_k=self.top_k,
-            )
+
+            if evaluate_ood:
+                # Post-processing to get OOD panoptic segmentation.
+                panoptic_image_ood, _ = get_panoptic_segmentation(
+                    sem_out_ood,
+                    c,
+                    o,
+                    thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
+                    label_divisor=self.meta.label_divisor,
+                    stuff_area=self.stuff_area,
+                    void_label=-1,
+                    threshold=self.threshold,
+                    nms_kernel=self.nms_kernel,
+                    top_k=self.top_k,
+                )
 
             # For semantic segmentation evaluation.
             processed_results.append({"sem_seg": torch.squeeze(sem_out)})
-            processed_results[0]["sem_seg_ood"] = torch.squeeze(sem_out_ood)
-            processed_results[0]["sem_score"] = r
-            processed_results[0]["anomaly_score"] = torch.tensor(anomaly_score)
-            processed_results[0]["centre_score"] = c
-            processed_results[0]["offset_score"] = o
+            processed_results[-1]["sem_score"] = r
+            processed_results[-1]["centre_score"] = c
+            processed_results[-1]["offset_score"] = o
             panoptic_image = panoptic_image.squeeze(0)
-            panoptic_image_ood = panoptic_image_ood.squeeze(0)
             semantic_prob = F.softmax(r, dim=0)
             # For panoptic segmentation evaluation.
             processed_results[-1]["panoptic_seg"] = (panoptic_image, None)
-            processed_results[-1]["panoptic_seg_ood"] = (panoptic_image_ood, None)
+
+            if hasattr(self, "evaluate_ood"):
+                processed_results[-1]["sem_seg"] = torch.squeeze(sem_out_ood)
+                processed_results[-1]["panoptic_seg"] = (panoptic_image_ood, None)
+                processed_results[-1]["anomaly_score"] = torch.tensor(anomaly_score)
+                panoptic_image_ood = panoptic_image_ood.squeeze(0)
             # For instance segmentation evaluation.
             if self.predict_instances:
                 instances = []
