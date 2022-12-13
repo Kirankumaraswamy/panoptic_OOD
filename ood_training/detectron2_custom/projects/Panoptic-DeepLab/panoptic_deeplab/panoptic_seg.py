@@ -24,6 +24,7 @@ from detectron2.utils.registry import Registry
 from .post_processing import get_panoptic_segmentation
 import matplotlib.pyplot as plt
 from scipy.stats import entropy
+import copy
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -154,11 +155,16 @@ class PanopticDeepLab(nn.Module):
         for sem_seg_result, center_result, offset_result, input_per_image, image_size in zip(
             sem_seg_results, center_results, offset_results, batched_inputs, images.image_sizes
         ):
+
+            sem_seg_result = sem_seg_result[0]
+            ood_segment_result = sem_seg_result[1]
             height = input_per_image.get("height")
             width = input_per_image.get("width")
             r = sem_seg_postprocess(sem_seg_result, image_size, height, width)
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
+
+            ood = sem_seg_postprocess(ood_segment_result, image_size, height, width)
 
             sem = r.argmax(dim=0, keepdim=True)
             if hasattr(self, "evaluate_ood"):
@@ -167,8 +173,7 @@ class PanopticDeepLab(nn.Module):
                 evaluate_ood = False
 
             if evaluate_ood:
-                sum_val = r.sum(axis=0)
-                sem = r.argmax(dim=0, keepdim=True)
+                sum_val = ood.sum(axis=0)
 
                 for cls in range(19):
                     sum_val = torch.where(sem == cls,
@@ -176,23 +181,46 @@ class PanopticDeepLab(nn.Module):
                                           sum_val)
                 sum_val = torch.absolute(sum_val)
                 anomaly_score = torch.absolute(sum_val) / torch.absolute(sum_val).max()
-                '''plt.imshow(torch.squeeze(anomaly_score).detach().cpu().numpy())
-                plt.show()'''
+                plt.imshow(torch.squeeze(anomaly_score).detach().cpu().numpy())
+                plt.show()
 
                 sem_out = sem.clone()
-                sem_out[anomaly_score > self.ood_threshold] = 19
+                sem_out[anomaly_score > self.threshold] = 19
 
 
                 correct_class_val = torch.zeros_like(sum_val)
                 for cls in range(19):
                     correct_class_val = torch.where(sem == cls,
-                                          ((correct_class_val + r[cls,:,:]) - self.correct_class_mean[cls]) / np.sqrt(self.correct_class_var[cls]),
+                                          ((correct_class_val + ood[cls,:,:]) - self.correct_class_mean[cls]) / np.sqrt(self.correct_class_var[cls]),
                                           correct_class_val)
 
                 correct_class_val = torch.absolute(correct_class_val)
                 anomaly_score_correct_class = torch.absolute(correct_class_val) / torch.absolute(correct_class_val).max()
-                '''plt.imshow(torch.squeeze(anomaly_score_correct_class).detach().cpu().numpy())
+                plt.imshow(torch.squeeze(anomaly_score_correct_class).detach().cpu().numpy())
+                plt.show()
+
+                '''combined_anomaly = anomaly_score_correct_class * anomaly_score
+                combined_anomaly = combined_anomaly / combined_anomaly.max()
+                plt.imshow(torch.squeeze(combined_anomaly).detach().cpu().numpy())
                 plt.show()'''
+
+
+
+                '''non_class_val = torch.zeros_like(sum_val)
+                sum_all_axis = ood.sum(axis=0)
+                for cls in range(19):
+                    non_class_val = torch.where(sem == cls,
+                                          ((sum_all_axis - ood[cls,:,:]) - self.sum_non_class_mean[cls]) / np.sqrt(self.sum_non_class_var[cls]),
+                                          non_class_val)
+
+                non_class_val = torch.absolute(non_class_val)
+                anomaly_score_non_class = torch.absolute(non_class_val) / torch.absolute(
+                    non_class_val).max()
+                plt.imshow(torch.squeeze(anomaly_score_non_class).detach().cpu().numpy())
+                plt.show()'''
+
+
+
 
             # Post-processing to get panoptic segmentation.
             panoptic_image, _ = get_panoptic_segmentation(
@@ -234,10 +262,10 @@ class PanopticDeepLab(nn.Module):
             processed_results[-1]["panoptic_seg"] = (panoptic_image, None)
 
             if evaluate_ood:
-                processed_results[-1]["sem_seg"] = torch.squeeze(sem_out)
+                processed_results[-1]["sem_seg_ood"] = torch.squeeze(sem_out)
                 processed_results[-1]["anomaly_score"] = torch.squeeze(anomaly_score)
                 panoptic_image_ood = panoptic_image_ood.squeeze(0)
-                processed_results[-1]["panoptic_seg"] = (panoptic_image_ood, None)
+                processed_results[-1]["panoptic_seg_ood"] = (panoptic_image_ood, None)
             # For instance segmentation evaluation.
             if self.predict_instances:
                 instances = []
@@ -368,9 +396,18 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             )
             weight_init.c2_xavier_fill(self.head[0])
             weight_init.c2_xavier_fill(self.head[1])
-        self.predictor = Conv2d(head_channels, num_classes, kernel_size=1, activation=F.sigmoid)
+        self.predictor = Conv2d(head_channels, num_classes, kernel_size=1)
         nn.init.normal_(self.predictor.weight, 0, 0.001)
         nn.init.constant_(self.predictor.bias, 0)
+
+        self.ood_head = copy.deepcopy(self.head)
+        self.ood_predictor = Conv2d(head_channels, num_classes, kernel_size=1)
+        nn.init.normal_(self.ood_predictor.weight, 0, 0.001)
+        nn.init.constant_(self.ood_predictor.bias, 0)
+
+        self.num_classes = num_classes
+
+        self.soft_plus = torch.nn.Softplus()
 
         self.BCE_loss = nn.BCELoss(reduce=False, reduction="mean")
         if loss_type == "cross_entropy":
@@ -393,15 +430,19 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             In training, returns (None, dict of losses)
             In inference, returns (CxHxW logits, {})
         """
-        y = self.layers(features)
+        y, ood_y = self.layers(features)
         if self.training:
-            return None, self.losses(y, targets, weights)
+            return None, self.losses(y, targets, weights, ood_y)
         else:
             y = F.interpolate(
                 y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
             )
 
-            return y, {}
+            ood_y = F.interpolate(
+                ood_y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+            )
+
+            return (y, ood_y), {}
 
     def layers(self, features):
         assert self.decoder_only
@@ -409,14 +450,22 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         y = self.head(y)
         y = self.predictor(y)
 
+        ood_y = super().layers(features)
+        ood_y = self.ood_head(ood_y)
+        ood_y = self.ood_predictor(ood_y)
+
         '''ent = entropy(F.softmax(y, dim=1).detach().cpu().numpy(), axis=1) / np.log(19)
         plt.imshow(torch.squeeze(ent).detach().cpu().numpy())
         plt.show()'''
-        return y
+        return y, ood_y
 
-    def losses(self, predictions, targets, weights=None):
+    def losses(self, predictions, targets, weights=None, ood_predictions=None):
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+        )
+
+        ood_predictions = F.interpolate(
+            ood_predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
 
         '''sum_val = predictions.sum(axis=1)
@@ -433,36 +482,26 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         plt.show()'''
 
 
-        ood_class = 19
-        num_classes = 19
-        pareto_alpha = 0.9
         ignore_train_ind = 255
         targets_temp = torch.clone(targets)
-        targets[targets == ignore_train_ind] = num_classes + 1
-        enc = torch.eye(num_classes + 2)[targets][..., :-2]
-        enc[targets == num_classes] = torch.zeros(num_classes)
-        enc[targets_temp == ignore_train_ind] = torch.zeros(num_classes)
+        targets_temp[targets == ignore_train_ind] = self.num_classes
+        enc = torch.eye(self.num_classes + 1)[targets_temp][..., :-1]
+        enc[targets == ignore_train_ind] = torch.zeros(self.num_classes)
         enc = enc.permute(0, 3, 1, 2).contiguous()
 
         enc_target = enc.to(targets.device)
-        #enc_weights = enc_target * 1
-        #enc_weights[enc_weights==0] = 1
-        #weights[targets_temp == ood_class] = 0
-        #weights[targets_temp == ignore_train_ind] = 0
-        weights = weights.unsqueeze(dim=1)
-        weights = weights.repeat(1,19,1,1)
 
-        pixel_losses = self.BCE_loss(predictions, enc_target) * weights
-        pixel_losses = pixel_losses.contiguous().view(-1)
-        if self.top_k_percent_pixels == 1.0:
-            pixel_losses = pixel_losses.mean()
-        else:
-            top_k_pixels = int(self.top_k_percent_pixels * pixel_losses.numel())
-            pixel_losses, _ = torch.topk(pixel_losses, top_k_pixels)
-            pixel_losses = pixel_losses.mean()
+        alpha = self.soft_plus(ood_predictions) + 1
+        sum_class = alpha.sum(dim=1)
+        probability = alpha.permute(1, 0,2,3)/ sum_class
+        probability = probability.permute(1,0,2,3)
+        uncertainity = self.num_classes / sum_class
 
-        #loss = self.loss(predictions, targets, weights)
-        losses = {"loss_sem_seg": pixel_losses * 5.0}
+        loss = enc_target * torch.log(sum_class/alpha.permute(1, 0,2,3)).permute(1,0,2,3)
+        u_loss = loss.sum(dim=1).mean()
+
+        sem_loss = self.loss(predictions, targets, weights)
+        losses = {"loss_sem_seg": sem_loss * self.loss_weight, "loss_uncertainity":  u_loss}
         return losses
 
 
