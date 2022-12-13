@@ -400,11 +400,6 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         nn.init.normal_(self.predictor.weight, 0, 0.001)
         nn.init.constant_(self.predictor.bias, 0)
 
-        self.ood_head = copy.deepcopy(self.head)
-        self.ood_predictor = Conv2d(head_channels, num_classes, kernel_size=1)
-        nn.init.normal_(self.ood_predictor.weight, 0, 0.001)
-        nn.init.constant_(self.ood_predictor.bias, 0)
-
         self.num_classes = num_classes
 
         self.soft_plus = torch.nn.Softplus()
@@ -430,57 +425,26 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             In training, returns (None, dict of losses)
             In inference, returns (CxHxW logits, {})
         """
-        y, ood_y = self.layers(features)
+        y = self.layers(features)
         if self.training:
-            return None, self.losses(y, targets, weights, ood_y)
+            return None, self.losses(y, targets, weights)
         else:
             y = F.interpolate(
                 y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
             )
-
-            ood_y = F.interpolate(
-                ood_y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
-            )
-
-            return (y, ood_y), {}
+            return y, {}
 
     def layers(self, features):
         assert self.decoder_only
         y = super().layers(features)
         y = self.head(y)
         y = self.predictor(y)
+        return y
 
-        ood_y = super().layers(features)
-        ood_y = self.ood_head(ood_y)
-        ood_y = self.ood_predictor(ood_y)
-
-        '''ent = entropy(F.softmax(y, dim=1).detach().cpu().numpy(), axis=1) / np.log(19)
-        plt.imshow(torch.squeeze(ent).detach().cpu().numpy())
-        plt.show()'''
-        return y, ood_y
-
-    def losses(self, predictions, targets, weights=None, ood_predictions=None):
+    def losses(self, predictions, targets, weights=None):
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
-
-        ood_predictions = F.interpolate(
-            ood_predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
-        )
-
-        '''sum_val = predictions.sum(axis=1)
-        sem = torch.argmax(predictions, axis=1)
-
-        for c in range(19):
-            sum_val = torch.where(sem == c,
-                                        (sum_val - self.class_mean[c]) / np.sqrt(self.class_var[c]),
-                                        sum_val)
-        sum_val = torch.absolute(sum_val)        
-
-        normalized_sum_val  = torch.absolute(sum_val) / torch.absolute(sum_val).max()
-        plt.imshow(torch.squeeze(normalized_sum_val).detach().cpu().numpy())
-        plt.show()'''
-
 
         ignore_train_ind = 255
         targets_temp = torch.clone(targets)
@@ -491,21 +455,21 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
 
         enc_target = enc.to(targets.device)
 
-        alpha = self.soft_plus(ood_predictions) + 1
+        alpha = self.soft_plus(predictions) + 1
         sum_class = alpha.sum(dim=1)
         probability = alpha.permute(1, 0,2,3)/ sum_class
         probability = probability.permute(1,0,2,3)
         uncertainity = self.num_classes / sum_class
 
-        ood_weights = torch.ones_like(weights)
-        ood_weights[targets == ignore_train_ind] = 0
+        softplus_weights = torch.ones_like(weights)
+        softplus_weights[targets == ignore_train_ind] = 0
 
         loss = enc_target * torch.log(sum_class/alpha.permute(1, 0,2,3)).permute(1,0,2,3)
-        u_loss = loss.sum(dim=1) * ood_weights
-        u_loss = u_loss.sum()/ ood_weights.sum()
+        loss = loss.sum(dim=1) * softplus_weights
+        sem_loss = loss.sum()/ softplus_weights.sum()
 
-        sem_loss = self.loss(predictions, targets, weights)
-        losses = {"loss_sem_seg": sem_loss * self.loss_weight, "loss_uncertainity":  u_loss * self.loss_weight}
+        #sem_loss = self.loss(predictions, targets, weights)
+        losses = {"loss_sem_seg": sem_loss * self.loss_weight}
         return losses
 
 
