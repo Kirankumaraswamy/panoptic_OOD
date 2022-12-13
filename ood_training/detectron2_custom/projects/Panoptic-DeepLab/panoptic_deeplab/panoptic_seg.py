@@ -497,11 +497,15 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         probability = probability.permute(1,0,2,3)
         uncertainity = self.num_classes / sum_class
 
+        ood_weights = torch.ones_like(weights)
+        ood_weights[targets == ignore_train_ind] = 0
+
         loss = enc_target * torch.log(sum_class/alpha.permute(1, 0,2,3)).permute(1,0,2,3)
-        u_loss = loss.sum(dim=1).mean()
+        u_loss = loss.sum(dim=1) * ood_weights
+        u_loss = u_loss.sum()/ ood_weights.sum()
 
         sem_loss = self.loss(predictions, targets, weights)
-        losses = {"loss_sem_seg": sem_loss * self.loss_weight, "loss_uncertainity":  u_loss}
+        losses = {"loss_sem_seg": sem_loss * self.loss_weight, "loss_uncertainity":  u_loss * self.loss_weight}
         return losses
 
 
