@@ -107,7 +107,7 @@ class CityscapesOOD(Dataset):
 
 
     def __init__(self, root: str = "/home/datasets/cityscapes/", split: str = "val", mode: str = "gtFine",
-                 transform: Optional[Callable] = None, cfg=None) -> None:
+                 transform: Optional[Callable] = None, cfg=None, dataset="cityscapes") -> None:
         """
         Cityscapes dataset loader
         """
@@ -124,7 +124,12 @@ class CityscapesOOD(Dataset):
 
         self.cityscapes_data_dicts = []
 
-        self.json_file = os.path.join(self.root, "gtFine", "cityscapes_panoptic_" + self.split + ".json")
+        if dataset == "bdd":
+            self.dataset_prefix = "bdd"
+        else:
+            self.dataset_prefix = "cityscapes"
+
+        self.json_file = os.path.join(self.root, "gtFine", self.dataset_prefix+"_panoptic_" + self.split + ".json")
         with open(self.json_file, 'r') as f:
             self.cityscapes_data_dicts = json.load(f)["annotations"]
 
@@ -133,7 +138,7 @@ class CityscapesOOD(Dataset):
             city_name = image_id.split("_")[0]
             dict["sem_seg_file_name"] = os.path.join(self.root, "gtFine", self.split, city_name,
                                                      image_id + "_gtFine_labelTrainIds.png")
-            dict["pan_seg_file_name"] = os.path.join(self.root, "gtFine", "cityscapes_panoptic_" + self.split,
+            dict["pan_seg_file_name"] = os.path.join(self.root, "gtFine", self.dataset_prefix+"_panoptic_" + self.split,
                                                      image_id + "_gtFine_panoptic.png")
             dict["file_name"] = os.path.join(self.root, "leftImg8bit", self.split, city_name,
                                              image_id + "_leftImg8bit.png")
