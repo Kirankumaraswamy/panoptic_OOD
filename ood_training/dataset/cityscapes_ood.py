@@ -135,6 +135,7 @@ class CityscapesOOD(Dataset):
 
         for dict in self.cityscapes_data_dicts:
             image_id = dict["image_id"]
+
             city_name = image_id.split("_")[0]
             dict["sem_seg_file_name"] = os.path.join(self.root, "gtFine", self.split, city_name,
                                                      image_id + "_gtFine_labelTrainIds.png")
@@ -142,6 +143,8 @@ class CityscapesOOD(Dataset):
                                                      image_id + "_gtFine_panoptic.png")
             dict["file_name"] = os.path.join(self.root, "leftImg8bit", self.split, city_name,
                                              image_id + "_leftImg8bit.png")
+            for segments in dict["segments_info"]:
+                segments['category_id'] = self.id_to_train_id[segments['category_id']]
 
             # needed for panoptic training
         dataset_names = 'cityscapes_fine_panoptic_train'
@@ -166,10 +169,6 @@ class CityscapesOOD(Dataset):
 
         target = []
         pan_seg_gt = utils.read_image(data["pan_seg_file_name"], "RGB")
-
-        # convert id into train IDs
-        for segments_info in data["segments_info"]:
-            segments_info['category_id'] = self.id_to_train_id[segments_info['category_id']]
 
         #image, pan_seg_gt, data = self.add_random_mask(image, pan_seg_gt.copy(), data.copy())
 
