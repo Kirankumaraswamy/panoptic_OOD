@@ -1,5 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Reference: https://github.com/bowenc0221/panoptic-deeplab/blob/aa934324b55a34ce95fea143aea1cb7a6dbe04bd/segmentation/data/transforms/target_transforms.py#L11  # noqa
+import random
+
 import numpy as np
 import torch
 
@@ -79,6 +81,7 @@ class PanopticDeepLabTargetGenerator(object):
         height, width = panoptic.shape[0], panoptic.shape[1]
         semantic = np.zeros_like(panoptic, dtype=np.uint8) + self.ignore_label
         center = np.zeros((height, width), dtype=np.float32)
+        ood_mask = np.zeros((height, width), dtype=np.float32)
         center_pts = []
         offset = np.zeros((2, height, width), dtype=np.float32)
         y_coord, x_coord = np.meshgrid(
@@ -109,6 +112,10 @@ class PanopticDeepLabTargetGenerator(object):
                 if len(mask_index[0]) == 0:
                     # the instance is completely cropped
                     continue
+
+                ood_prob = random.random()
+                if ood_prob > 0.75:
+                    ood_mask[mask_index] = 1.0
 
                 # Find instance area
                 ins_area = len(mask_index[0])
@@ -152,4 +159,5 @@ class PanopticDeepLabTargetGenerator(object):
             sem_seg_weights=torch.as_tensor(semantic_weights.astype(np.float32)),
             center_weights=torch.as_tensor(center_weights.astype(np.float32)),
             offset_weights=torch.as_tensor(offset_weights.astype(np.float32)),
+            ood_mask=torch.as_tensor(ood_mask.astype(np.float32)),
         )

@@ -24,7 +24,7 @@ from detectron2.utils.registry import Registry
 from .post_processing import get_panoptic_segmentation
 import matplotlib.pyplot as plt
 from scipy.stats import entropy
-import copy
+from torchvision.transforms import Resize, InterpolationMode
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -114,10 +114,18 @@ class PanopticDeepLab(nn.Module):
                 weights = ImageList.from_tensors(weights, size_divisibility).tensor
             else:
                 weights = None
+            if "ood_mask" in batched_inputs[0]:
+                # The default D2 DatasetMapper may not contain "sem_seg_weights"
+                # Avoid error in testing when default DatasetMapper is used.
+                ood_mask = [x["ood_mask"].to(self.device) for x in batched_inputs]
+                ood_mask = ImageList.from_tensors(ood_mask, size_divisibility).tensor
+            else:
+                ood_mask = None
         else:
             targets = None
             weights = None
-        sem_seg_results, sem_seg_losses = self.sem_seg_head(features, targets, weights)
+            ood_mask = None
+        sem_seg_results, sem_seg_losses = self.sem_seg_head(features, targets, weights, ood_mask)
         losses.update(sem_seg_losses)
 
         if "center" in batched_inputs[0] and "offset" in batched_inputs[0]:
@@ -155,16 +163,11 @@ class PanopticDeepLab(nn.Module):
         for sem_seg_result, center_result, offset_result, input_per_image, image_size in zip(
             sem_seg_results, center_results, offset_results, batched_inputs, images.image_sizes
         ):
-
-            sem_seg_positive = sem_seg_result[0]
-            sem_seg_negative = sem_seg_result[1]
             height = input_per_image.get("height")
             width = input_per_image.get("width")
-            r = sem_seg_postprocess(sem_seg_positive, image_size, height, width)
+            r = sem_seg_postprocess(sem_seg_result, image_size, height, width)
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
-
-            r_n = sem_seg_postprocess(sem_seg_negative, image_size, height, width)
 
             sem = r.argmax(dim=0, keepdim=True)
             if hasattr(self, "evaluate_ood"):
@@ -173,9 +176,55 @@ class PanopticDeepLab(nn.Module):
                 evaluate_ood = False
 
             if evaluate_ood:
-                sum_val = r_n.sum(axis=0)
+                sum_val = r.sum(axis=0)
+                sem = r.argmax(dim=0, keepdim=True)
 
-                # TODO
+                for cls in range(19):
+                    sum_val = torch.where(sem == cls,
+                                          (sum_val - self.sum_all_class_mean[cls]) / np.sqrt(self.sum_all_class_var[cls]),
+                                          sum_val)
+                sum_val = torch.absolute(sum_val)
+                anomaly_score = torch.absolute(sum_val) / torch.absolute(sum_val).max()
+                '''plt.imshow(torch.squeeze(anomaly_score).detach().cpu().numpy())
+                plt.show()'''
+
+                sem_out = sem.clone()
+                sem_out[anomaly_score > self.threshold] = 19
+
+
+                correct_class_val = torch.zeros_like(sum_val)
+                for cls in range(19):
+                    correct_class_val = torch.where(sem == cls,
+                                          ((correct_class_val + r[cls,:,:]) - self.correct_class_mean[cls]) / np.sqrt(self.correct_class_var[cls]),
+                                          correct_class_val)
+
+                correct_class_val = torch.absolute(correct_class_val)
+                anomaly_score_correct_class = torch.absolute(correct_class_val) / torch.absolute(correct_class_val).max()
+                '''plt.imshow(torch.squeeze(anomaly_score_correct_class).detach().cpu().numpy())
+                plt.show()'''
+
+                '''combined_anomaly = anomaly_score_correct_class * anomaly_score
+                combined_anomaly = combined_anomaly / combined_anomaly.max()
+                plt.imshow(torch.squeeze(combined_anomaly).detach().cpu().numpy())
+                plt.show()'''
+
+
+
+                '''non_class_val = torch.zeros_like(sum_val)
+                sum_all_axis = r.sum(axis=0)
+                for cls in range(19):
+                    non_class_val = torch.where(sem == cls,
+                                          ((sum_all_axis - r[cls,:,:]) - self.sum_non_class_mean[cls]) / np.sqrt(self.sum_non_class_var[cls]),
+                                          non_class_val)
+
+                non_class_val = torch.absolute(non_class_val)
+                anomaly_score_non_class = torch.absolute(non_class_val) / torch.absolute(
+                    non_class_val).max()
+                plt.imshow(torch.squeeze(anomaly_score_non_class).detach().cpu().numpy())
+                plt.show()'''
+
+
+
 
             # Post-processing to get panoptic segmentation.
             panoptic_image, _ = get_panoptic_segmentation(
@@ -355,14 +404,6 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         nn.init.normal_(self.predictor.weight, 0, 0.001)
         nn.init.constant_(self.predictor.bias, 0)
 
-        self.neg_head = copy.deepcopy(self.head)
-        self.neg_predictor = Conv2d(head_channels, num_classes, kernel_size=1, activation=F.sigmoid)
-        nn.init.normal_(self.neg_predictor.weight, 0, 0.001)
-        nn.init.constant_(self.neg_predictor.bias, 0)
-
-        self.num_classes = num_classes
-        self.ignore_value = ignore_value
-
         self.BCE_loss = nn.BCELoss(reduce=False, reduction="mean")
         if loss_type == "cross_entropy":
             self.loss = nn.CrossEntropyLoss(reduction="mean", ignore_index=ignore_value)
@@ -378,99 +419,91 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         ret["loss_top_k"] = cfg.MODEL.SEM_SEG_HEAD.LOSS_TOP_K
         return ret
 
-    def forward(self, features, targets=None, weights=None):
+    def forward(self, features, targets=None, weights=None, ood_mask=None):
         """
         Returns:
             In training, returns (None, dict of losses)
             In inference, returns (CxHxW logits, {})
         """
-        yp, yn = self.layers(features)
+        y = self.layers(features, ood_mask)
         if self.training:
-            return None, self.losses(yp, yn, targets, weights)
+            return None, self.losses(y, targets, weights, ood_mask)
         else:
-            yp = F.interpolate(
-                yp, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+            y = F.interpolate(
+                y, scale_factor=self.common_stride, mode="bilinear", align_corners=False
             )
 
-            yn = F.interpolate(
-                yn, scale_factor=self.common_stride, mode="bilinear", align_corners=False
-            )
+            return y, {}
 
-            return (yp, yn), {}
-
-    def layers(self, features):
+    def layers(self, features, ood_mask=None):
         assert self.decoder_only
-        yp = super().layers(features)
-        yp = self.head(yp)
-        yp = self.predictor(yp)
+        y = super().layers(features)
 
-        yn = super().layers(features)
-        yn = self.neg_head(yn)
-        yn = self.neg_predictor(yn)
+        if hasattr(self, "ood_train") and self.ood_train:
+            y_partial = y.clone()
+            y_partial = y_partial.permute(0, 2, 3, 1)
+            partial_mask = [i for i, r in enumerate(torch.rand(y_partial.size()[1])) if r > 0.25]
+            ood_mask = F.interpolate(
+                ood_mask.unsqueeze(dim=1), scale_factor=0.25, mode="nearest"
+            )
+            ood_mask = ood_mask.squeeze(dim=1)
+            y_partial[ood_mask==1][:, partial_mask] = 0
+            y_partial = y_partial.permute(0, 3, 1, 2)
+            y = y_partial
+        y = self.head(y)
+        y = self.predictor(y)
+        return y
 
-        '''ent = entropy(F.softmax(y, dim=1).detach().cpu().numpy(), axis=1) / np.log(19)
-        plt.imshow(torch.squeeze(ent).detach().cpu().numpy())
+    def losses(self, predictions, targets, weights=None, ood_mask=None):
+        predictions = F.interpolate(
+            predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+        )
+
+        '''sum_val = predictions.sum(axis=1)
+        sem = torch.argmax(predictions, axis=1)
+
+        for c in range(19):
+            sum_val = torch.where(sem == c,
+                                        (sum_val - self.class_mean[c]) / np.sqrt(self.class_var[c]),
+                                        sum_val)
+        sum_val = torch.absolute(sum_val)        
+
+        normalized_sum_val  = torch.absolute(sum_val) / torch.absolute(sum_val).max()
+        plt.imshow(torch.squeeze(normalized_sum_val).detach().cpu().numpy())
         plt.show()'''
-        return yp, yn
-
-    def losses(self, positive_predictions, negative_predictions, targets, weights=None):
-        positive_predictions = F.interpolate(
-            positive_predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
-        )
-
-        negative_predictions = F.interpolate(
-            negative_predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
-        )
-
-        positive_targets = torch.clone(targets)
-        negative_targets = torch.clone(targets)
-
-        positive_targets[targets == self.ignore_value] = self.num_classes
-        enc_positive = torch.eye(self.num_classes + 1)[positive_targets][..., :-1]
-        enc_positive[targets == self.ignore_value] = torch.zeros(self.num_classes)
-        enc_positive = enc_positive.permute(0, 3, 1, 2).contiguous()
-
-        negative_targets[targets == self.ignore_value] = self.num_classes
-        enc_negative = torch.eye(self.num_classes + 1)[negative_targets][..., :-1]
-        enc_negative[targets == self.ignore_value] = torch.zeros(self.num_classes)
-        enc_negative = enc_negative.permute(0, 3, 1, 2).contiguous()
 
 
-        enc_positive_target = enc_positive.to(targets.device)
-        enc_negative_target = enc_negative.to(targets.device)
+        ood_class = 19
+        num_classes = 19
+        pareto_alpha = 0.9
+        ignore_train_ind = 255
+        targets_temp = torch.clone(targets)
+        targets[targets == ignore_train_ind] = num_classes + 1
+        enc = torch.eye(num_classes + 2)[targets][..., :-2]
+        enc[targets == num_classes] = torch.zeros(num_classes)
+        enc[targets_temp == ignore_train_ind] = torch.zeros(num_classes)
 
-        #enc_weights = enc_target * 1
-        #enc_weights[enc_weights==0] = 1
-        positive_weights = weights.clone()
-        positive_weights = positive_weights.unsqueeze(dim=1)
-        positive_weights = positive_weights.repeat(1,19,1,1)
-        positive_weights[enc_positive_target==0] =  positive_weights[enc_positive_target==0] * 0.5
+        if hasattr(self, "ood_train") and self.ood_train:
+            enc[ood_mask == 1.0] = torch.zeros(num_classes)
+            weights[ood_mask != 1.0] = weights[ood_mask != 1.0] * 0.1
+            weights[ood_mask == 1.0] =  weights[ood_mask == 1.0] * 0.9
+        weights = weights.unsqueeze(dim=1)
+        weights = weights.repeat(1,19,1,1)
 
-        negative_weights = weights.clone()
-        negative_weights = negative_weights.unsqueeze(dim=1)
-        negative_weights = negative_weights.repeat(1, 19, 1, 1)
-        negative_weights[enc_negative_target == 1] = negative_weights[enc_negative_target == 1] * 0.5
+        enc = enc.permute(0, 3, 1, 2).contiguous()
+        enc_target = enc.to(targets.device)
 
-
-        positive_losses = self.BCE_loss(positive_predictions, enc_positive_target) * positive_weights
-        positive_losses = positive_losses.contiguous().view(-1)
+        pixel_losses = self.BCE_loss(predictions, enc_target) * weights
+        pixel_losses = pixel_losses.contiguous().view(-1)
         if self.top_k_percent_pixels == 1.0:
-            positive_losses = positive_losses.mean()
+            pixel_losses = pixel_losses.mean()
         else:
-            top_k_pixels = int(self.top_k_percent_pixels * positive_losses.numel())
-            positive_losses, _ = torch.topk(positive_losses, top_k_pixels)
-            positive_losses = positive_losses.mean()
+            top_k_pixels = int(self.top_k_percent_pixels * pixel_losses.numel())
+            pixel_losses, _ = torch.topk(pixel_losses, top_k_pixels)
+            pixel_losses = pixel_losses.mean()
 
-        negative_losses = self.BCE_loss(negative_predictions, enc_negative_target) * negative_weights
-        negative_losses = negative_losses.contiguous().view(-1)
-        if self.top_k_percent_pixels == 1.0:
-            negative_losses = negative_losses.mean()
-        else:
-            top_k_pixels = int(self.top_k_percent_pixels * negative_losses.numel())
-            negative_losses, _ = torch.topk(negative_losses, top_k_pixels)
-            negative_losses = negative_losses.mean()
-
-        losses = {"loss_pos_seg": positive_losses * 5.0, "loss_neg_seg":  negative_losses * 5.0}
+        #loss = self.loss(predictions, targets, weights)
+        losses = {"loss_sem_seg": pixel_losses * 5.0}
         return losses
 
 
