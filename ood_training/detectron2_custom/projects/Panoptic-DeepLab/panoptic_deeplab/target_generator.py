@@ -149,6 +149,15 @@ class PanopticDeepLabTargetGenerator(object):
                 offset[0][mask_index] = center_y - y_coord[mask_index]
                 offset[1][mask_index] = center_x - x_coord[mask_index]
 
+            else:
+                ood_prob = random.random()
+                stuff_pixel_mask = np.where(semantic==cat_id)
+                if len(stuff_pixel_mask[0]) > 20000:
+                    random_start = random.randint(0, len(stuff_pixel_mask[0])-14000)
+                    random_size = random.randint(20, 100)
+                    if ood_prob > 0.75:
+                        ood_mask[stuff_pixel_mask[0][random_start]:stuff_pixel_mask[0][random_start] + random_size,
+                        stuff_pixel_mask[1][random_start]:stuff_pixel_mask[1][random_start] + random_size] = 1.0
         center_weights = center_weights[None]
         offset_weights = offset_weights[None]
         return dict(
