@@ -428,8 +428,13 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             ood_mask = F.interpolate(
                 ood_mask.unsqueeze(dim=1), scale_factor=0.25, mode="nearest"
             )
+            mask = torch.ones_like(ood_mask)
+            mask = mask.repeat(1, 256, 1, 1).permute(1, 0, 2, 3)
             ood_mask = ood_mask.squeeze(dim=1)
-            y_partial[ood_mask==1][:, partial_mask] = 0
+            for ind in partial_mask:
+                mask[ind] = 0
+            mask = mask.permute((1, 2, 3, 0))
+            y_partial[ood_mask == 1] = y_partial[ood_mask == 1] * mask[ood_mask == 1]
             y_partial = y_partial.permute(0, 3, 1, 2)
             y = y_partial
         y = self.head(y)
@@ -441,35 +446,38 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
 
-        '''sum_val = predictions.sum(axis=1)
+        '''anomaly =  torch.zeros_like(weights)
         sem = torch.argmax(predictions, axis=1)
+        class_prob = predictions.max(dim=1)[0]
 
         for c in range(19):
-            sum_val = torch.where(sem == c,
-                                        (sum_val - self.class_mean[c]) / np.sqrt(self.class_var[c]),
-                                        sum_val)
-        sum_val = torch.absolute(sum_val)        
+            anomaly[sem == c] = (class_prob[sem == c].mean() -class_prob[sem == c] ) / torch.sqrt(class_prob[sem == c].std())
+            anomaly[anomaly < 0] = 0
+            if anomaly[sem == c].sum() > 0:
+                anomaly[sem == c] = anomaly[sem == c] / anomaly[sem == c].max()
 
-        normalized_sum_val  = torch.absolute(sum_val) / torch.absolute(sum_val).max()
-        plt.imshow(torch.squeeze(normalized_sum_val).detach().cpu().numpy())
+        plt.imshow(torch.squeeze(anomaly).detach().cpu().numpy())
+        plt.show()
+        plt.imshow(torch.squeeze(sem).detach().cpu().numpy())
         plt.show()'''
 
 
         targets_temp = torch.clone(targets)
         targets[targets == self.ignore_value] = self.num_classes
-        enc = torch.eye(self.num_classes + 1)[targets][..., :-1]
-        enc[targets_temp == self.ignore_value] = torch.zeros(self.num_classes)
+        enc = torch.eye(self.num_classes + 1).to(targets.device)[targets][..., :-1]
+        enc[targets_temp == self.ignore_value] = torch.zeros(self.num_classes).to(targets.device)
 
 
         if hasattr(self, "ood_train") and self.ood_train:
-            enc[ood_mask == 1.0] = torch.zeros(self.num_classes)
+            enc[ood_mask == 1.0] = torch.zeros(self.num_classes).to(targets.device)
             partial_weights = weights.clone()
-            weights[ood_mask != 1.0] = weights[ood_mask != 1.0]
-            weights[ood_mask == 1.0] =  0.0
+            #weights[ood_mask != 1.0] = weights[ood_mask != 1.0]
+            #weights[ood_mask == 1.0] =  weights[ood_mask == 1.0]
             # no void
-            weights[targets_temp==self.ignore_value] = 0
+            #weights[targets_temp==self.ignore_value] = 0
             weights = weights.unsqueeze(dim=1)
-            weights = weights.repeat(1,19,1,1).permute((0,2,3,1))
+            weights = weights.repeat(1,19,1,1)
+            '''weights = weights.permute((0,2,3,1))
             for i in range(19):
                 partial_pixels = torch.logical_and(targets_temp==i, ood_mask == 1.0)
                 if partial_pixels.sum() > 0:
@@ -477,11 +485,11 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
                     t = torch.eye(19)[i]* 1.0
                     t = t.to(weights.device)
                     weights[partial_pixels] = t
-            weights = weights.permute((0,3,1,2))
+            weights = weights.permute((0,3,1,2))'''
 
         else:
             # no void
-            weights[targets_temp == self.ignore_value] = 0
+            #weights[targets_temp == self.ignore_value] = 0
             weights = weights.unsqueeze(dim=1)
             weights = weights.repeat(1, 19, 1, 1)
 
