@@ -423,18 +423,18 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         if hasattr(self, "ood_train") and self.ood_train:
             y_partial = y.clone()
             y_partial = y_partial.permute(0, 2, 3, 1)
-            random_prob = random.randint(20, 50)/100
+            random_prob = random.randint(0, 50)/100
             partial_mask = [i for i, r in enumerate(torch.rand(y_partial.size()[1])) if r > random_prob]
             ood_mask = F.interpolate(
                 ood_mask.unsqueeze(dim=1), scale_factor=0.25, mode="nearest"
             )
             mask = torch.ones_like(ood_mask)
-            mask = mask.repeat(1, 256, 1, 1).permute(1, 0, 2, 3)
+            mask = mask.repeat(1, 256, 1, 1).permute(1,0,2,3)
             ood_mask = ood_mask.squeeze(dim=1)
             for ind in partial_mask:
-                mask[ind] = 0
-            mask = mask.permute((1, 2, 3, 0))
-            y_partial[ood_mask == 1] = y_partial[ood_mask == 1] * mask[ood_mask == 1]
+                mask[ind] = torch.rand(mask[ind].size()).to(ood_mask.device) * 2
+            mask = mask.permute((1,2,3,0))
+            y_partial[ood_mask==1] = y_partial[ood_mask==1] + mask[ood_mask==1]
             y_partial = y_partial.permute(0, 3, 1, 2)
             y = y_partial
         y = self.head(y)
@@ -474,7 +474,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
             #weights[ood_mask != 1.0] = weights[ood_mask != 1.0]
             #weights[ood_mask == 1.0] =  weights[ood_mask == 1.0]
             # no void
-            #weights[targets_temp==self.ignore_value] = 0
+            weights[targets_temp==self.ignore_value] = 0
             weights = weights.unsqueeze(dim=1)
             weights = weights.repeat(1,19,1,1)
             '''weights = weights.permute((0,2,3,1))
@@ -489,7 +489,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
 
         else:
             # no void
-            #weights[targets_temp == self.ignore_value] = 0
+            weights[targets_temp == self.ignore_value] = 0
             weights = weights.unsqueeze(dim=1)
             weights = weights.repeat(1, 19, 1, 1)
 
