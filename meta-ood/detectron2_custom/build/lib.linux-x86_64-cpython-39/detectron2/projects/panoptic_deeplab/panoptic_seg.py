@@ -164,28 +164,36 @@ class PanopticDeepLab(nn.Module):
             softmax_out = F.softmax(r)
             softmax_out = softmax_out.detach().cpu().numpy()
             sem_out = r.argmax(dim=0).cpu().numpy()
+            sem_out_ood = np.copy(sem_out)
 
-            if hasattr(self, "max_softmax") and self.max_softmax:
+            if hasattr(self, "evaluate_ood"):
+                evaluate_ood = self.evaluate_ood
+            else:
+                evaluate_ood = False
+
+            if evaluate_ood and self.max_softmax:
                 # for max softmax
                 if hasattr(self, "threshold"):
-                    threshold = self.threshold
+                    ood_threshold = self.ood_threshold
                 else:
-                    threshold = 0
+                    ood_threshold = 0
                 max_sem_out = np.max(softmax_out, axis=0)
-                sem_out[np.where(max_sem_out < threshold)] = 19
+                sem_out_ood[np.where(max_sem_out < ood_threshold)] = 19
                 anamoly_score = max_sem_out
             else:
                 # for entropy baseline
                 if hasattr(self, "threshold"):
-                    threshold = self.threshold
+                    ood_threshold = self.ood_threshold
                 else:
-                    threshold = 1
+                    ood_threshold = 1
                 ent = entropy(softmax_out, axis=0) / np.log(19)
-                sem_out[np.where(ent > threshold)] = 19
+                sem_out_ood[np.where(ent > ood_threshold)] = 19
                 anamoly_score = ent
 
             sem_out = torch.tensor(sem_out)
             sem_out = sem_out.unsqueeze(dim=0)
+            sem_out_ood = torch.tensor(sem_out_ood)
+            sem_out_ood = sem_out_ood.unsqueeze(dim=0)
             c = c.cpu()
             o = o.cpu()
 
@@ -202,16 +210,40 @@ class PanopticDeepLab(nn.Module):
                 nms_kernel=self.nms_kernel,
                 top_k=self.top_k,
             )
+
+            if evaluate_ood:
+                # Post-processing to get OOD panoptic segmentation.
+                panoptic_image_ood, _ = get_panoptic_segmentation(
+                    sem_out_ood,
+                    c,
+                    o,
+                    thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
+                    label_divisor=self.meta.label_divisor,
+                    stuff_area=self.stuff_area,
+                    void_label=-1,
+                    threshold=self.threshold,
+                    nms_kernel=self.nms_kernel,
+                    top_k=self.top_k,
+                )
+
             # For semantic segmentation evaluation.
             processed_results.append({"sem_seg": torch.squeeze(sem_out)})
-            processed_results[0]["sem_score"] = r
-            processed_results[0]["anomaly_score"] = torch.tensor(anamoly_score)
-            processed_results[0]["centre_score"] = c
-            processed_results[0]["offset_score"] = o
+            processed_results[-1]["sem_score"] = r
+            processed_results[-1]["centre_score"] = c
+            processed_results[-1]["offset_score"] = o
             panoptic_image = panoptic_image.squeeze(0)
+
             semantic_prob = F.softmax(r, dim=0)
             # For panoptic segmentation evaluation.
             processed_results[-1]["panoptic_seg"] = (panoptic_image, None)
+
+
+            if evaluate_ood:
+                processed_results[-1]["sem_seg"] = torch.squeeze(sem_out_ood)
+                panoptic_image_ood = panoptic_image_ood.squeeze(0)
+                processed_results[-1]["anomaly_score"] = torch.tensor(anamoly_score)
+                processed_results[-1]["panoptic_seg"] = (panoptic_image_ood, None)
+
             # For instance segmentation evaluation.
             if self.predict_instances:
                 instances = []
