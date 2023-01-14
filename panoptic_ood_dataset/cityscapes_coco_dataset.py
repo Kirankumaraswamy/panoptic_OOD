@@ -214,7 +214,7 @@ def apply_blending(mask, cityscapes_coco_panoptic_values, cityscapes_disparity_i
         kernel_size = int((len(bins) - bin)/3)
         if kernel_size % 2 == 0:
             kernel_size = kernel_size - 1
-        blurred_img = cv2.GaussianBlur(cityscapes_masked_image, (3, 3), 0)
+        blurred_img = cv2.GaussianBlur(cityscapes_masked_image, (kernel_size, kernel_size), 0)
         #print("Kernel_size ",  kernel_size)
         cityscapes_masked_image[mask] = blurred_img[mask]
 
