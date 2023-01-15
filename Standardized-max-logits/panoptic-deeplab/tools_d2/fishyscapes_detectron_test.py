@@ -39,7 +39,8 @@ import torch.nn.functional as F
 from torchvision.utils import save_image
 from scipy import ndimage as ndi
 from kornia.morphology import dilation, erosion
-
+import _init_paths
+import d2
 
 
 dirname = os.path.dirname(__file__)

@@ -29,6 +29,9 @@ from detectron2.projects.panoptic_deeplab import (
 )
 from detectron2.engine import DefaultTrainer
 import ood_config
+import _init_paths
+import d2
+
 # Argument Parser
 parser = argparse.ArgumentParser(description='Semantic Segmentation')
 parser.add_argument('--lr', type=float, default=0.01)
@@ -211,7 +214,7 @@ torch.distributed.init_process_group(backend='nccl',
 
 model_name = ood_config.model_name
 ckpt_path = ood_config.init_ckpt
-threshold = ood_config.threshold
+threshold = ood_config.ood_threshold
 config_file = ood_config.config_file
 
 

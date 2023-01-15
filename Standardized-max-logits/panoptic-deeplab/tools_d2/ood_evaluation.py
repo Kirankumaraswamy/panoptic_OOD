@@ -24,6 +24,9 @@ from cityscapesscripts.helpers.labels import trainId2label
 import matplotlib.pyplot as plt
 import ood_config
 
+import _init_paths
+import d2
+
 model_name = ood_config.model_name
 ckpt_path = ood_config.init_ckpt
 config_file = ood_config.config_file

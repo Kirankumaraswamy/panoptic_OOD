@@ -159,9 +159,7 @@ class PanopticDeepLab(nn.Module):
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
 
-            sem_out = r.argmax(dim=0, keepdim=True)
-            anomaly_score = 0
-
+            sem = r.argmax(dim=0, keepdim=True)
             if hasattr(self, "evaluate_ood"):
                 evaluate_ood = self.evaluate_ood
             else:
@@ -170,9 +168,9 @@ class PanopticDeepLab(nn.Module):
             if evaluate_ood:
                 if self.class_mean is None or self.class_var is None:
                     raise Exception("Class mean and var are not set!")
-                anomaly_score, prediction = torch.unsqueeze(r, dim=0).detach().cpu().max(1)
+                anomaly_score, prediction = r.max(dim=0)
                 for cls in range(19):
-                    anomaly_score = torch.where(prediction == cls,
+                    anomaly_score = torch.where(sem == cls,
                                                 (anomaly_score - self.class_mean[cls]) / np.sqrt(self.class_var[cls]),
                                                 anomaly_score)
 
@@ -182,18 +180,12 @@ class PanopticDeepLab(nn.Module):
                 anom = torch.absolute(anom) / torch.absolute(anom).max()
                 plt.imshow(torch.squeeze(anom).detach().cpu().numpy())
                 plt.show()'''
-
-                prediction = prediction.cpu().numpy()
-                anomaly_score = anomaly_score.numpy()
-                prediction[np.where(anomaly_score > self.ood_threshold)] = 19
-                sem_out_ood = torch.tensor(prediction)
-                c = c.cpu()
-                o = o.cpu()
-                sem_out = sem_out.cpu()
+                sem_out = sem.clone()
+                sem_out[anomaly_score > self.ood_threshold] = 19
 
             # Post-processing to get panoptic segmentation.
             panoptic_image, _ = get_panoptic_segmentation(
-                sem_out,
+                sem,
                 c,
                 o,
                 thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
@@ -208,7 +200,7 @@ class PanopticDeepLab(nn.Module):
             if evaluate_ood:
                 # Post-processing to get OOD panoptic segmentation.
                 panoptic_image_ood, _ = get_panoptic_segmentation(
-                    sem_out_ood,
+                    sem_out,
                     c,
                     o,
                     thing_ids=self.meta.thing_dataset_id_to_contiguous_id.values(),
@@ -220,7 +212,7 @@ class PanopticDeepLab(nn.Module):
                     top_k=self.top_k,
                 )
             # For semantic segmentation evaluation.
-            processed_results.append({"sem_seg": torch.squeeze(sem_out)})
+            processed_results.append({"sem_seg": torch.squeeze(sem)})
             processed_results[-1]["sem_score"] = r
             processed_results[-1]["centre_score"] = c
             processed_results[-1]["offset_score"] = o
@@ -230,7 +222,7 @@ class PanopticDeepLab(nn.Module):
             processed_results[-1]["panoptic_seg"] = (panoptic_image, None)
             if evaluate_ood:
                 processed_results[-1]["anomaly_score"] = torch.squeeze(torch.tensor(anomaly_score))
-                processed_results[-1]["sem_seg"] = torch.squeeze(sem_out_ood)
+                processed_results[-1]["sem_seg"] = torch.squeeze(sem_out)
                 panoptic_image_ood = panoptic_image_ood.squeeze(0)
                 processed_results[-1]["panoptic_seg"] = (panoptic_image_ood, None)
             # For instance segmentation evaluation.
