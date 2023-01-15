@@ -25,6 +25,7 @@ import io
 import cv2
 from torchvision.transforms import Resize
 import json
+import copy
 
 
 
@@ -107,7 +108,7 @@ class CityscapesOOD(Dataset):
 
 
     def __init__(self, root: str = "/home/datasets/cityscapes/", split: str = "val", mode: str = "gtFine",
-                 transform: Optional[Callable] = None, cfg=None, dataset="cityscapes") -> None:
+                 transform: Optional[Callable] = None, cfg=None, dataset="cityscapes", ood_training=False) -> None:
         """
         Cityscapes dataset loader
         """
@@ -151,6 +152,7 @@ class CityscapesOOD(Dataset):
         dataset_names = cfg.DATASETS.TRAIN
         meta = MetadataCatalog.get(dataset_names[0])
         thing_ids = list(meta.thing_dataset_id_to_contiguous_id.values())
+        self.ood_training = ood_training
 
         self.panoptic_target_generator = PanopticDeepLabTargetGenerator(
             ignore_label=meta.ignore_label,
@@ -160,10 +162,11 @@ class CityscapesOOD(Dataset):
             small_instance_area=cfg.INPUT.SMALL_INSTANCE_AREA,
             small_instance_weight=cfg.INPUT.SMALL_INSTANCE_WEIGHT,
             ignore_crowd_in_semantic=cfg.INPUT.IGNORE_CROWD_IN_SEMANTIC,
+            ood_training=ood_training
         )
 
     def __getitem__(self, i):
-        data = self.cityscapes_data_dicts[i]
+        data = copy.deepcopy(self.cityscapes_data_dicts[i])
         # image = Image.open(data["file_name"]).convert('RGB')
         image = utils.read_image(data["file_name"])
 

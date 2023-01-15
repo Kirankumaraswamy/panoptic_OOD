@@ -20,6 +20,7 @@ class PanopticDeepLabTargetGenerator(object):
         small_instance_area=0,
         small_instance_weight=1,
         ignore_crowd_in_semantic=False,
+        ood_training=False
     ):
         """
         Args:
@@ -42,7 +43,7 @@ class PanopticDeepLabTargetGenerator(object):
         self.small_instance_area = small_instance_area
         self.small_instance_weight = small_instance_weight
         self.ignore_crowd_in_semantic = ignore_crowd_in_semantic
-
+        self.ood_training = ood_training
         # Generate the default Gaussian image for each center
         self.sigma = sigma
         size = 6 * sigma + 3
@@ -94,8 +95,8 @@ class PanopticDeepLabTargetGenerator(object):
         # (1) It is labeled as `ignore_label`
         # (2) It is crowd region (iscrowd=1)
         # (3) (Optional) It is stuff region (for offset branch)
-        center_weights = np.zeros_like(panoptic, dtype=np.uint8)
-        offset_weights = np.zeros_like(panoptic, dtype=np.uint8)
+        center_weights = np.zeros_like(panoptic, dtype=np.float32)
+        offset_weights = np.zeros_like(panoptic, dtype=np.float32)
         for seg in segments_info:
             cat_id = seg["category_id"]
             if not (self.ignore_crowd_in_semantic and seg["iscrowd"]):
@@ -114,8 +115,10 @@ class PanopticDeepLabTargetGenerator(object):
                     continue
 
                 ood_prob = random.random()
-                if ood_prob > 0.75:
+                if self.ood_training and ood_prob > 0.75:
                     ood_mask[mask_index] = 1.0
+                    center_weights[mask_index] = 0.5
+                    offset_weights[mask_index] = 0.5
 
                 # Find instance area
                 ins_area = len(mask_index[0])
@@ -149,14 +152,57 @@ class PanopticDeepLabTargetGenerator(object):
                 offset[0][mask_index] = center_y - y_coord[mask_index]
                 offset[1][mask_index] = center_x - x_coord[mask_index]
 
-            else:
+            elif self.ood_training:
                 ood_prob = random.random()
                 stuff_pixel_mask = np.where(semantic==cat_id)
                 if len(stuff_pixel_mask[0]) > 20000:
                     random_start = random.randint(0, len(stuff_pixel_mask[0])-14000)
                     random_size = random.randint(20, 100)
-                    ood_mask[stuff_pixel_mask[0][random_start]:stuff_pixel_mask[0][random_start] + random_size,
+                    mask_pixels = np.zeros((height, width), dtype=np.float32)
+                    mask_pixels[stuff_pixel_mask[0][random_start]:stuff_pixel_mask[0][random_start] + random_size,
                     stuff_pixel_mask[1][random_start]:stuff_pixel_mask[1][random_start] + random_size] = 1.0
+
+                    ood_mask[mask_pixels==1.0] = 1.0
+                    # update center offsets for training
+                    mask_index = np.where(mask_pixels==1.0)
+                    if len(mask_index[0]) == 0:
+                        # the instance is completely cropped
+                        continue
+                    # Find instance area
+                    ins_area = len(mask_index[0])
+                    if ins_area < self.small_instance_area:
+                        semantic_weights[mask_pixels==1.0] = self.small_instance_weight
+
+                    center_y, center_x = np.mean(mask_index[0]), np.mean(mask_index[1])
+                    center_pts.append([center_y, center_x])
+
+                    # generate center heatmap
+                    y, x = int(round(center_y)), int(round(center_x))
+                    sigma = self.sigma
+                    # upper left
+                    ul = int(np.round(x - 3 * sigma - 1)), int(np.round(y - 3 * sigma - 1))
+                    # bottom right
+                    br = int(np.round(x + 3 * sigma + 2)), int(np.round(y + 3 * sigma + 2))
+
+                    # start and end indices in default Gaussian image
+                    gaussian_x0, gaussian_x1 = max(0, -ul[0]), min(br[0], width) - ul[0]
+                    gaussian_y0, gaussian_y1 = max(0, -ul[1]), min(br[1], height) - ul[1]
+
+                    # start and end indices in center heatmap image
+                    center_x0, center_x1 = max(0, ul[0]), min(br[0], width)
+                    center_y0, center_y1 = max(0, ul[1]), min(br[1], height)
+                    center[center_y0:center_y1, center_x0:center_x1] = np.maximum(
+                        center[center_y0:center_y1, center_x0:center_x1],
+                        self.g[gaussian_y0:gaussian_y1, gaussian_x0:gaussian_x1],
+                    )
+
+                    # generate offset (2, h, w) -> (y-dir, x-dir)
+                    offset[0][mask_index] = center_y - y_coord[mask_index]
+                    offset[1][mask_index] = center_x - x_coord[mask_index]
+
+                    center_weights[mask_index] = 0.5
+                    offset_weights[mask_index] = 0.5
+
         center_weights = center_weights[None]
         offset_weights = offset_weights[None]
         return dict(

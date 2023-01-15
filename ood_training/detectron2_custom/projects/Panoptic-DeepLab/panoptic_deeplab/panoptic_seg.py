@@ -142,6 +142,13 @@ class PanopticDeepLab(nn.Module):
             offset_targets = ImageList.from_tensors(offset_targets, size_divisibility).tensor
             offset_weights = [x["offset_weights"].to(self.device) for x in batched_inputs]
             offset_weights = ImageList.from_tensors(offset_weights, size_divisibility).tensor
+            if "ood_mask" in batched_inputs[0]:
+                # The default D2 DatasetMapper may not contain "sem_seg_weights"
+                # Avoid error in testing when default DatasetMapper is used.
+                ood_mask = [x["ood_mask"].to(self.device) for x in batched_inputs]
+                ood_mask = ImageList.from_tensors(ood_mask, size_divisibility).tensor
+            else:
+                ood_mask = None
         else:
             center_targets = None
             center_weights = None
@@ -149,8 +156,10 @@ class PanopticDeepLab(nn.Module):
             offset_targets = None
             offset_weights = None
 
+            ood_mask = None
+
         center_results, offset_results, center_losses, offset_losses = self.ins_embed_head(
-            features, center_targets, center_weights, offset_targets, offset_weights
+            features, center_targets, center_weights, offset_targets, offset_weights, ood_mask
         )
         losses.update(center_losses)
         losses.update(offset_losses)
@@ -172,35 +181,31 @@ class PanopticDeepLab(nn.Module):
             o = sem_seg_postprocess(offset_result, image_size, height, width)
 
             sem = r.argmax(dim=0, keepdim=True)
+
             if hasattr(self, "evaluate_ood"):
                 evaluate_ood = self.evaluate_ood
             else:
                 evaluate_ood = False
 
             if evaluate_ood:
-                sum_val = r.sum(axis=0)
-                sem = r.argmax(dim=0, keepdim=True)
-
-                class_prob = r.max(dim=0)[0]
-
-                correct_class_val = torch.zeros_like(sum_val)
-                classes = [k for k in range(19)]
-                # classes = [11]
-                for cls in classes:
+                prob = r.max(dim=0)[0]
+                correct_class_val = torch.zeros_like(prob)
+                for cls in range(19):
                     if torch.sum(sem == cls) > 0:
                         correct_class_val = torch.where(sem == cls,
-                                                                       ((self.class_mean[cls]-class_prob) / np.sqrt(
-                                                                           self.class_var[cls])),
-                                                                       correct_class_val)
-                        '''correct_class_val[correct_class_val<0] = 0
-                        correct_class_val[sem == cls] = correct_class_val[sem == cls] / correct_class_val[
-                            sem == cls].max()'''
+                                                        (self.class_mean[cls] - prob) / np.sqrt(self.class_var[cls]),
+                                                        correct_class_val)
 
-                # anomaly_score_correct_class = torch.absolute(correct_class_val) / torch.absolute(correct_class_val).max()
-                '''plt.imshow(torch.squeeze(correct_class_val).detach().cpu().numpy())
-                plt.show()'''
+                        # shift the distribution starting from zero
+                        min_val = correct_class_val[sem == cls].min()
+                        correct_class_val[sem == cls] += torch.abs(min_val)
+                        correct_class_val[sem == cls] = correct_class_val[sem == cls] / correct_class_val[
+                            sem == cls].max()
 
                 anomaly_score = correct_class_val
+                '''plt.imshow(torch.squeeze(anomaly_score).detach().cpu().numpy())
+                plt.show()'''
+
                 sem_out = sem.clone()
                 sem_out[anomaly_score > self.ood_threshold] = 19
 
@@ -239,7 +244,8 @@ class PanopticDeepLab(nn.Module):
             processed_results[-1]["centre_score"] = c
             processed_results[-1]["offset_score"] = o
             panoptic_image = panoptic_image.squeeze(0)
-            semantic_prob = F.softmax(r, dim=0)
+            #semantic_prob = F.softmax(r, dim=0)
+            semantic_prob = r
             # For panoptic segmentation evaluation.
             processed_results[-1]["panoptic_seg"] = (panoptic_image, None)
 
@@ -421,20 +427,26 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         y = super().layers(features)
 
         if hasattr(self, "ood_train") and self.ood_train:
+            no_features = y.size()[1]
             y_partial = y.clone()
             y_partial = y_partial.permute(0, 2, 3, 1)
-            random_prob = random.randint(0, 50)/100
-            partial_mask = [i for i, r in enumerate(torch.rand(y_partial.size()[1])) if r > random_prob]
+            random_prob = random.randint(25, 75) / 100
+            partial_mask = [i for i, r in enumerate(torch.rand(y_partial.size()[-1])) if r > random_prob]
             ood_mask = F.interpolate(
                 ood_mask.unsqueeze(dim=1), scale_factor=0.25, mode="nearest"
             )
-            mask = torch.ones_like(ood_mask)
-            mask = mask.repeat(1, 256, 1, 1).permute(1,0,2,3)
+            mask = torch.ones_like(ood_mask).to(ood_mask.device)
+            mask = mask.repeat(1, no_features, 1, 1).permute(1, 0, 2, 3)
             ood_mask = ood_mask.squeeze(dim=1)
+            additive_noise = torch.rand(mask.size())
+            additive_noise = additive_noise.permute((1, 2, 3, 0)).to(ood_mask.device)
+            y_partial[ood_mask == 1] = y_partial[ood_mask == 1] + additive_noise[ood_mask == 1]
+
             for ind in partial_mask:
-                mask[ind] = torch.rand(mask[ind].size()).to(ood_mask.device) * 2
-            mask = mask.permute((1,2,3,0))
-            y_partial[ood_mask==1] = y_partial[ood_mask==1] + mask[ood_mask==1]
+                mask[ind] = 0
+            mask = mask.permute((1, 2, 3, 0))
+            y_partial[ood_mask == 1] = y_partial[ood_mask == 1] * mask[ood_mask == 1]
+
             y_partial = y_partial.permute(0, 3, 1, 2)
             y = y_partial
         y = self.head(y)
@@ -467,25 +479,15 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         enc = torch.eye(self.num_classes + 1).to(targets.device)[targets][..., :-1]
         enc[targets_temp == self.ignore_value] = torch.zeros(self.num_classes).to(targets.device)
 
-
         if hasattr(self, "ood_train") and self.ood_train:
             enc[ood_mask == 1.0] = torch.zeros(self.num_classes).to(targets.device)
             partial_weights = weights.clone()
-            #weights[ood_mask != 1.0] = weights[ood_mask != 1.0]
-            #weights[ood_mask == 1.0] =  weights[ood_mask == 1.0]
+            weights[ood_mask != 1.0] = weights[ood_mask != 1.0] * 0.8
+            weights[ood_mask == 1.0] = weights[ood_mask == 1.0] * 0.2
             # no void
-            weights[targets_temp==self.ignore_value] = 0
+            weights[targets_temp == self.ignore_value] = 0
             weights = weights.unsqueeze(dim=1)
-            weights = weights.repeat(1,19,1,1)
-            '''weights = weights.permute((0,2,3,1))
-            for i in range(19):
-                partial_pixels = torch.logical_and(targets_temp==i, ood_mask == 1.0)
-                if partial_pixels.sum() > 0:
-                    # consider only actual class for loss calculation
-                    t = torch.eye(19)[i]* 1.0
-                    t = t.to(weights.device)
-                    weights[partial_pixels] = t
-            weights = weights.permute((0,3,1,2))'''
+            weights = weights.repeat(1, 19, 1, 1)
 
         else:
             # no void
@@ -665,13 +667,14 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         center_weights=None,
         offset_targets=None,
         offset_weights=None,
+        ood_mask=None,
     ):
         """
         Returns:
             In training, returns (None, dict of losses)
             In inference, returns (CxHxW logits, {})
         """
-        center, offset = self.layers(features)
+        center, offset = self.layers(features, ood_mask)
         if self.training:
             return (
                 None,
@@ -691,15 +694,40 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
             )
             return center, offset, {}, {}
 
-    def layers(self, features):
+    def layers(self, features, ood_mask=None):
         assert self.decoder_only
         y = super().layers(features)
+
+        if hasattr(self, "ood_train") and self.ood_train:
+            no_features = y.size()[1]
+            y_partial = y.clone()
+            y_partial = y_partial.permute(0, 2, 3, 1)
+            random_prob = random.randint(25, 75) / 100
+            partial_mask = [i for i, r in enumerate(torch.rand(y_partial.size()[-1])) if r > random_prob]
+            ood_mask = F.interpolate(
+                ood_mask.unsqueeze(dim=1), scale_factor=0.25, mode="nearest"
+            )
+            mask = torch.ones_like(ood_mask).to(ood_mask.device)
+            mask = mask.repeat(1, no_features, 1, 1).permute(1, 0, 2, 3)
+            ood_mask = ood_mask.squeeze(dim=1)
+            additive_noise = torch.rand(mask.size())
+            additive_noise = additive_noise.permute((1, 2, 3, 0)).to(ood_mask.device)
+            y_partial[ood_mask == 1] = y_partial[ood_mask == 1] + additive_noise[ood_mask == 1]
+
+            for ind in partial_mask:
+                mask[ind] = 0
+            mask = mask.permute((1, 2, 3, 0))
+            y_partial[ood_mask == 1] = y_partial[ood_mask == 1] * mask[ood_mask == 1]
+
+            y_partial = y_partial.permute(0, 3, 1, 2)
+            y = y_partial
         # center
         center = self.center_head(y)
         center = self.center_predictor(center)
         # offset
         offset = self.offset_head(y)
         offset = self.offset_predictor(offset)
+
         return center, offset
 
     def center_losses(self, predictions, targets, weights):
