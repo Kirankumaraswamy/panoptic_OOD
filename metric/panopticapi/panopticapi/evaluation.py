@@ -11,6 +11,7 @@ from datetime import timedelta
 from collections import defaultdict
 import argparse
 import multiprocessing
+import math
 
 import PIL.Image as Image
 
@@ -101,8 +102,8 @@ class UPQStat():
             self.upq_per_cat[label] += upq_stat_cat
         return self
 
-    def upq_average(self):
-        upq, usq, urq, n = 0, 0, 0, 0
+    def upq_gmean(self):
+        upq, usq, urq, n = 1, 1, 1, 0
         per_class_results = {}
         for i in range(2):
             iou = self.upq_per_cat[i].iou
@@ -117,11 +118,11 @@ class UPQStat():
             usq_class = iou / tp if tp != 0 else 0
             urq_class = tp / (tp + 0.5 * fp + 0.5 * fn)
             per_class_results[i] = {'upq': upq_class, 'usq': usq_class, 'urq': urq_class, 'no_instances': (tp+fn), "correct_instances": tp, "false_instances": fp}
-            upq += upq_class
-            usq += usq_class
-            urq += urq_class
+            upq *= upq_class
+            usq *= usq_class
+            urq *= urq_class
 
-        return {'upq': upq / n, 'usq': usq / n, 'urq': urq / n, 'n': n}, per_class_results
+        return {'upq': math.sqrt(upq) , 'usq': math.sqrt(usq), 'urq': math.sqrt(urq), 'n': n}, per_class_results
 
 
 @get_traceback
@@ -311,7 +312,7 @@ def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None, e
     print("-" * (10 + 7 * 4))
 
     if evaluate_ood:
-        upq_result = upq_stat.upq_average()
+        upq_result = upq_stat.upq_gmean()
 
     for name, _isthing in metrics:
         print("{:10s}| {:5.1f}  {:5.1f}  {:5.1f} {:5d}".format(
