@@ -27,10 +27,17 @@ from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.projects.panoptic_deeplab import (
     add_panoptic_deeplab_config
 )
+
+from detectron2.config import get_cfg
+from detectron2.engine import default_argument_parser, default_setup
+
 from detectron2.engine import DefaultTrainer
 import ood_config
 import _init_paths
 import d2
+from datasets.cityscapes_ood import CityscapesOOD
+import ood_config as config
+from torch.utils.data import DataLoader
 
 # Argument Parser
 parser = argparse.ArgumentParser(description='Semantic Segmentation')
@@ -227,7 +234,7 @@ def main():
     assert_and_infer_cfg(args)
     writer = prep_experiment(args, parser)
 
-    train_loader, val_loaders, train_obj, extra_val_loaders = datasets.setup_loaders(args)
+    #train_loader, val_loaders, train_obj, extra_val_loaders = datasets.setup_loaders(args)
 
     train = False
 
@@ -291,34 +298,43 @@ def main():
     # Main Loop
     # for epoch in range(args.start_epoch, args.max_epoch):
     
-    calculate_statistics(train_loader, seg_net, model_name)
+    calculate_statistics( seg_net, model_name)
 
-def calculate_statistics(train_loader, net, model_name):
+def panoptic_deep_lab_collate(batch):
+    data = [item[0] for item in batch]
+    target = [item[1] for item in batch]
+    # target = torch.stack(target)
+    return data, target
+
+def calculate_statistics( net, model_name):
     """
     Runs the training loop per epoch
     train_loader: Data loader for train
     net: thet network
     return:
     """
+    cfg = get_cfg()
+    add_panoptic_deeplab_config(cfg)
+    cfg.merge_from_file(config.config_file)
+    cfg.freeze()
+
     net.eval()
+    dataset_train = CityscapesOOD(root=config.ood_dataset_path, split=config.ood_split, cfg=cfg,
+                                  transform=None)
+
+    dataloader_train = DataLoader(dataset_train, batch_size=config.batch_size, shuffle=False,
+                                  collate_fn=panoptic_deep_lab_collate, num_workers=0)
+
 
     pred_list = None
     max_class_mean = {}
     print("Calculating statistics...")
-    for i, data in enumerate(train_loader):
+    for i, data in enumerate(dataloader_train):
         inputs = data[0]
         
 
-        inputs = inputs.cuda()
-        B, C, H, W = inputs.shape
-        batch_pixel_size = C * H * W
-
-        inputs = torch.squeeze(inputs)
-
-        input = [{"image": inputs, "height": inputs.size()[1], "width": inputs.size()[2]}]
-
         with torch.no_grad():
-            output = net(input)
+            output = net(inputs)
             
         outputs = torch.unsqueeze(output[0]['sem_score'], dim=0)
 
@@ -337,7 +353,7 @@ def calculate_statistics(train_loader, net, model_name):
         del outputs
         print("batch: ", i)
 
-        if i % 200 == 199 or i == len(train_loader) - 1:
+        if i % 200 == 199 or i == len(dataloader_train) - 1:
             pred_list = pred_list.transpose(1, 3)
             pred_list, prediction = pred_list.max(3)
 
