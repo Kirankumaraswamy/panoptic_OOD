@@ -171,24 +171,25 @@ class PanopticDeepLab(nn.Module):
             else:
                 evaluate_ood = False
 
-            if evaluate_ood and self.max_softmax:
-                # for max softmax
-                if hasattr(self, "threshold"):
-                    ood_threshold = self.ood_threshold
+            if evaluate_ood:
+                if hasattr(self, "max_softmax") and self.max_softmax:
+                    # for max softmax
+                    if hasattr(self, "threshold"):
+                        ood_threshold = self.ood_threshold
+                    else:
+                        ood_threshold = 0
+                    max_sem_out = np.max(softmax_out, axis=0)
+                    sem_out_ood[np.where(max_sem_out < ood_threshold)] = 19
+                    anamoly_score = max_sem_out
                 else:
-                    ood_threshold = 0
-                max_sem_out = np.max(softmax_out, axis=0)
-                sem_out_ood[np.where(max_sem_out < ood_threshold)] = 19
-                anamoly_score = max_sem_out
-            else:
-                # for entropy baseline
-                if hasattr(self, "threshold"):
-                    ood_threshold = self.ood_threshold
-                else:
-                    ood_threshold = 1
-                ent = entropy(softmax_out, axis=0) / np.log(19)
-                sem_out_ood[np.where(ent > ood_threshold)] = 19
-                anamoly_score = ent
+                    # for entropy baseline
+                    if hasattr(self, "threshold"):
+                        ood_threshold = self.ood_threshold
+                    else:
+                        ood_threshold = 1
+                    ent = entropy(softmax_out, axis=0) / np.log(19)
+                    sem_out_ood[np.where(ent > ood_threshold)] = 19
+                    anamoly_score = ent
 
             sem_out = torch.tensor(sem_out)
             sem_out = sem_out.unsqueeze(dim=0)
