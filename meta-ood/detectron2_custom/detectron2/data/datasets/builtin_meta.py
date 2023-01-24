@@ -222,7 +222,7 @@ CITYSCAPES_CATEGORIES = [
     {"color": (0, 80, 100), "isthing": 1, "id": 31, "trainId": 16, "name": "train"},
     {"color": (0, 0, 230), "isthing": 1, "id": 32, "trainId": 17, "name": "motorcycle"},
     {"color": (119, 11, 32), "isthing": 1, "id": 33, "trainId": 18, "name": "bicycle"},
-    {"color": (0, 200, 0), "isthing": 1, "id": 50, "trainId": 19, "name": "OOD"},
+    {"color": (0, 255, 0), "isthing": 1, "id": 50, "trainId": 19, "name": "OOD"},
 ]
 
 # fmt: off
@@ -341,7 +341,7 @@ def _get_builtin_metadata(dataset_name):
         CITYSCAPES_STUFF_CLASSES = [
             "road", "sidewalk", "building", "wall", "fence", "pole", "traffic light",
             "traffic sign", "vegetation", "terrain", "sky", "person", "rider", "car",
-            "truck", "bus", "train", "motorcycle", "bicycle",
+            "truck", "bus", "train", "motorcycle", "bicycle", "OOD",
         ]
         # fmt: on
         return {
