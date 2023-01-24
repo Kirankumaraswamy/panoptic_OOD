@@ -18,10 +18,41 @@ from detectron2.projects.panoptic_deeplab import (
 from detectron2.projects.deeplab import add_deeplab_config
 from detectron2.config import get_cfg
 import config as meta_ood_config
+from dataset.cityscapes_ood import CityscapesOOD
+import detectron2.data.transforms as T
 
 import _init_paths
 import d2
 
+def panoptic_deep_lab_collate(batch):
+    data = [item[0] for item in batch]
+    target = [item[1] for item in batch]
+    # target = torch.stack(target)
+    return data, target
+
+'''def build_sem_seg_train_aug(cfg):
+    augs = [
+        T.ResizeShortestEdge(
+            cfg.INPUT.MIN_SIZE_TRAIN, cfg.INPUT.MAX_SIZE_TRAIN, cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
+        )
+    ]
+    if cfg.INPUT.CROP.ENABLED:
+        augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
+    augs.append(T.RandomFlip())
+    return augs'''
+
+def build_sem_seg_train_aug(cfg):
+    augs = [
+        T.ResizeShortestEdge(
+            cfg.INPUT.MIN_SIZE_TRAIN, cfg.INPUT.MAX_SIZE_TRAIN, cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
+        )
+    ]
+    if cfg.INPUT.CROP.ENABLED:
+        if min(cfg.INPUT.CROP.SIZE) > min(cfg.INPUT.MIN_SIZE_TRAIN):
+            augs.append(T.MyOpTransform(cfg.INPUT.CROP.SIZE))
+        augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
+    augs.append(T.RandomFlip())
+    return augs
 
 def cross_entropy(logits, targets):
     """
@@ -36,11 +67,9 @@ def cross_entropy(logits, targets):
     return L
 
 def deep_lab_loss(logits, targets, criterion):
-    #pixel_losses = criterion(logits, targets).contiguous().view(-1)
-
+    # use of hard pixel mining with top 20 percent for loss calculation
     neg_log_like = - 1.0 * F.log_softmax(logits, 1)
     L = torch.mul(targets.float(), neg_log_like).sum(dim=1).contiguous().view(-1)
-    #L = L.mean()
 
     top_k_pixels = int(0.2 * L.numel())
     pixel_losses, _ = torch.topk(L, top_k_pixels)
@@ -117,10 +146,19 @@ def training_routine(config):
 
     cr_loss = torch.nn.CrossEntropyLoss(ignore_index=255, reduction="none")
     optimizer = optim.Adam(network.parameters(), lr=params.learning_rate)
-    trainloader = config.dataset('train', transform, roots.cs_root, roots.coco_root, params.ood_subsampling_factor,
-                                 cs_split="train", coco_split="val", cfg=dataset_cfg, model="detectron")
-    dataloader = DataLoader(trainloader, batch_size=params.batch_size, shuffle=True,
-                            collate_fn=panoptic_deep_lab_collate)
+
+    if roots.model_name == "Detectron_Panoptic_DeepLab":
+        trainloader = CityscapesOOD(root=roots.cs_root, split="train", cfg=dataset_cfg,
+                                    transform=build_sem_seg_train_aug(dataset_cfg), dataset=config.dataset)
+
+        dataloader = DataLoader(trainloader, batch_size=params.batch_size, shuffle=True,
+                                collate_fn=panoptic_deep_lab_collate, num_workers=0)
+    else:
+        trainloader = config.dataset('train', transform, roots.cs_root, roots.coco_root, params.ood_subsampling_factor,
+                                     cs_split="train", coco_split="val", cfg=dataset_cfg, model="detectron")
+        dataloader = DataLoader(trainloader, batch_size=params.batch_size, shuffle=True,
+                                collate_fn=panoptic_deep_lab_collate)
+
 
     for epoch in range(start_epoch, start_epoch + epochs):
         """Perform one epoch of training"""
@@ -136,18 +174,18 @@ def training_routine(config):
             #logits = network(x.cuda())
             logits = logits["sem_seg_results"]
 
-            '''import matplotlib.pyplot as plt
+            import matplotlib.pyplot as plt
             plt.imshow(x[0]["image"].permute(1, 2, 0).numpy())
             #plt.imshow(x[0].permute(1, 2, 0).numpy())
             plt.show()
-            out = torch.squeeze(logits[0]).detach().cpu().numpy().argmax(axis=0)
+            '''out = torch.squeeze(logits[0]).detach().cpu().numpy().argmax(axis=0)
             plt.imshow(out)
             plt.show()
             plt.imshow(x[0]["center"].squeeze().numpy())
             plt.show()
-            plt.imshow(x[0]["center_weights"].squeeze().numpy())
-            plt.show()'''
-            '''plt.imshow(torch.squeeze(target[0]).numpy())
+            plt.imshow(torch.squeeze(x[0]["sem_seg"]).numpy())
+            plt.show()
+            plt.imshow(torch.squeeze(target[0]["sem_seg"]).numpy())
             plt.show()'''
 
             y = encode_target(target=target, pareto_alpha=params.pareto_alpha, num_classes=dataset.num_classes,
@@ -162,9 +200,8 @@ def training_routine(config):
             
             loss = loss_seg + loss_center + loss_offset
             print(loss_seg.item(), loss_center.item(), loss_offset.item())
-            
             #loss1 = cross_entropy(logits, y)
-
+            #print(loss1)
             loss.backward()
             optimizer.step()
             print('{} Loss: {}'.format(i, loss.item()))
