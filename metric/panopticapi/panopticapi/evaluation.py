@@ -197,13 +197,12 @@ def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, cate
             if iou > 0.5:
                 gt_matched.add(gt_label)
                 pred_matched.add(pred_label)
-                if not gt_segms[gt_label]['category_id'] == 50:
-                    pq_stat[gt_segms[gt_label]['category_id']].tp += 1
-                    pq_stat[gt_segms[gt_label]['category_id']].iou += iou
+                pq_stat[gt_segms[gt_label]['category_id']].tp += 1
+                pq_stat[gt_segms[gt_label]['category_id']].iou += iou
 
-                    upq_stat[0].tp += 1
-                    upq_stat[0].iou += iou
-                else:
+                upq_stat[0].tp += 1
+                upq_stat[0].iou += iou
+                if gt_segms[gt_label]['category_id'] == 50:
                     upq_stat[1].tp += 1
                     upq_stat[1].iou += iou
 
@@ -217,10 +216,9 @@ def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, cate
                 crowd_labels_dict[gt_info['category_id']] = gt_label
                 continue
 
-            if not gt_segms[gt_label]['category_id'] == 50:
-                pq_stat[gt_info['category_id']].fn += 1
-                upq_stat[0].fn += 1
-            else:
+            pq_stat[gt_info['category_id']].fn += 1
+            upq_stat[0].fn += 1
+            if gt_segms[gt_label]['category_id'] == 50:
                 upq_stat[1].fn += 1
 
         # count false positives
@@ -236,10 +234,10 @@ def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, cate
             if intersection / pred_info['area'] > 0.5:
                 continue
 
-            if not gt_segms[gt_label]['category_id'] == 50:
-                pq_stat[pred_info['category_id']].fp += 1
-                upq_stat[0].fp += 1
-            else:
+
+            pq_stat[pred_info['category_id']].fp += 1
+            upq_stat[0].fp += 1
+            if gt_segms[gt_label]['category_id'] == 50:
                 upq_stat[1].fp += 1
 
     print('Core: {}, all {} images processed'.format(proc_id, len(annotation_set)))
