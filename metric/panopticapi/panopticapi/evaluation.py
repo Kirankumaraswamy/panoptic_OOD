@@ -52,6 +52,8 @@ class PQStat():
         pq, sq, rq, n = 0, 0, 0, 0
         per_class_results = {}
         for label, label_info in categories.items():
+            if label_info["name"] == "OOD":
+                continue
             if isthing is not None:
                 cat_isthing = label_info['isthing'] == 1
                 if isthing != cat_isthing:
@@ -73,6 +75,28 @@ class PQStat():
             rq += rq_class
 
         return {'pq': pq / n, 'sq': sq / n, 'rq': rq / n, 'n': n}, per_class_results
+
+    def pq_ood(self, categories):
+        pq, sq, rq, n = 0, 0, 0, 0
+        ood_result = None
+        for label, label_info in categories.items():
+            if label_info["name"] == "OOD":
+                iou = self.pq_per_cat[label].iou
+                tp = self.pq_per_cat[label].tp
+                fp = self.pq_per_cat[label].fp
+                fn = self.pq_per_cat[label].fn
+
+                if tp + fp + fn == 0:
+                    ood_result = {'pq': 0.0, 'sq': 0.0, 'rq': 0.0}
+                    continue
+
+                pq_class = iou / (tp + 0.5 * fp + 0.5 * fn)
+                sq_class = iou / tp if tp != 0 else 0
+                rq_class = tp / (tp + 0.5 * fp + 0.5 * fn)
+
+                ood_result = {'pq': pq_class, 'sq': sq_class, 'rq': rq_class}
+
+        return ood_result
 
 
 class UPQStatCat():
@@ -117,12 +141,13 @@ class UPQStat():
             upq_class = iou / (tp + 0.5 * fp + 0.5 * fn)
             usq_class = iou / tp if tp != 0 else 0
             urq_class = tp / (tp + 0.5 * fp + 0.5 * fn)
-            per_class_results[i] = {'upq': upq_class, 'usq': usq_class, 'urq': urq_class, 'no_instances': (tp+fn), "correct_instances": tp, "false_instances": fp}
+            per_class_results[i] = {'upq': upq_class, 'usq': usq_class, 'urq': urq_class, 'no_instances': (tp + fn),
+                                    "correct_instances": tp, "false_instances": fp}
             upq *= upq_class
             usq *= usq_class
             urq *= urq_class
 
-        return {'upq': math.sqrt(upq) , 'usq': math.sqrt(usq), 'urq': math.sqrt(urq), 'n': n}, per_class_results
+        return {'upq': math.sqrt(upq), 'usq': math.sqrt(usq), 'urq': math.sqrt(urq), 'n': n}, per_class_results
 
 
 @get_traceback
@@ -166,7 +191,6 @@ def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, cate
             raise KeyError(
                 'In the image with ID {} the following segment IDs {} are presented in JSON and not presented in PNG.'.format(
                     gt_ann['image_id'], list(pred_labels_set)))
-
 
         # confusion matrix calculation
         pan_gt_pred = pan_gt.astype(np.uint64) * OFFSET + pan_pred.astype(np.uint64)
@@ -234,7 +258,6 @@ def pq_compute_single_core(proc_id, annotation_set, gt_folder, pred_folder, cate
             if intersection / pred_info['area'] > 0.5:
                 continue
 
-
             pq_stat[pred_info['category_id']].fp += 1
             upq_stat[0].fp += 1
             if gt_segms[gt_label]['category_id'] == 50:
@@ -297,8 +320,8 @@ def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None, e
         if image_id in pred_annotations:
             matched_annotations_list.append((gt_ann, pred_annotations[image_id]))
 
-
-    pq_stat, upq_stat = pq_compute_multi_core(matched_annotations_list, gt_folder, pred_folder, categories, evaluate_ood)
+    pq_stat, upq_stat = pq_compute_multi_core(matched_annotations_list, gt_folder, pred_folder, categories,
+                                              evaluate_ood)
 
     metrics = [("All", None), ("Things", True), ("Stuff", False)]
     results = {}
@@ -310,6 +333,7 @@ def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None, e
     print("-" * (10 + 7 * 4))
 
     if evaluate_ood:
+        results_ood = pq_stat.pq_ood(categories)
         upq_result = upq_stat.upq_gmean()
 
     for name, _isthing in metrics:
@@ -321,7 +345,29 @@ def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None, e
             results[name]['n'])
         )
     if evaluate_ood:
-        results["OOD"] = upq_result
+        pq_in = results["All"]["pq"]
+        sq_in = results["All"]["sq"]
+        rq_in = results["All"]["rq"]
+        pq_out = results_ood["pq"]
+        sq_out = results_ood["sq"]
+        rq_out = results_ood["rq"]
+
+        pod_q = math.sqrt(pq_in * pq_out)
+        sod_q = math.sqrt(sq_in * sq_out)
+        rod_q = math.sqrt(rq_in * rq_out)
+
+        results["OOD"] = {
+            'POD-Q': pod_q,
+            'SOD-Q': sod_q,
+            'ROD-Q': rod_q,
+            'PQ-in': pq_in,
+            'SQ-in': sq_in,
+            'RQ-in': rq_in,
+            'PQ-out': pq_out,
+            'SQ-out': sq_out,
+            'RQ-out': rq_out
+        }
+        results["uncertainity"] = upq_result
     t_delta = time.time() - start_time
     print("Time elapsed: {:0.2f} seconds".format(t_delta))
 

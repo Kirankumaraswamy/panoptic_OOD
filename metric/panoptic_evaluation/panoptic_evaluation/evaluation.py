@@ -466,6 +466,7 @@ def panoptic_process(inputs, outputs, evaluate_ood):
         output = outputs[i]
         panoptic_img, segments_info = output["panoptic_seg"]
         panoptic_img = panoptic_img.cpu().numpy().squeeze()
+        panoptic_img[panoptic_img<-1] = -1
 
         if segments_info is None:
             # If "segments_info" is None, we assume "panoptic_img" is a
@@ -552,7 +553,17 @@ def panoptic_evaluate(predictions, predictions_ood, gt_json_path, gt_data_path, 
     res["RQ_st"] = 100 * pq_res["Stuff"]["rq"]
 
     if evaluate_ood:
-        res["UPQ"] = 100 * pq_res["OOD"][0]["upq"]
+        res["POD-Q"] = 100 * pq_res["OOD"]["POD-Q"]
+        res["SOD-Q"] = 100 * pq_res["OOD"]["SOD-Q"]
+        res["ROD-Q"] = 100 * pq_res["OOD"]["ROD-Q"]
+        res["PQ-in"] = 100 * pq_res["OOD"]["PQ-in"]
+        res["SQ-in"] = 100 * pq_res["OOD"]["SQ-in"]
+        res["RQ-in"] = 100 * pq_res["OOD"]["RQ-in"]
+        res["PQ-out"] = 100 * pq_res["OOD"]["PQ-out"]
+        res["SQ-out"] = 100 * pq_res["OOD"]["SQ-out"]
+        res["RQ-out"] = 100 * pq_res["OOD"]["RQ-out"]
+
+        '''res["UPQ"] = 100 * pq_res["OOD"][0]["upq"]
         res["USQ"] = 100 * pq_res["OOD"][0]["usq"]
         res["URQ"] = 100 * pq_res["OOD"][0]["urq"]
         res["UPQ_in"] = 100 * pq_res["OOD"][1][0]["upq"]
@@ -560,7 +571,7 @@ def panoptic_evaluate(predictions, predictions_ood, gt_json_path, gt_data_path, 
         res["URQ_in"] = 100 * pq_res["OOD"][1][0]["urq"]
         res["UPQ_out"] = 100 * pq_res["OOD"][1][1]["upq"]
         res["USQ_out"] = 100 * pq_res["OOD"][1][1]["usq"]
-        res["URQ_out"] = 100 * pq_res["OOD"][1][1]["urq"]
+        res["URQ_out"] = 100 * pq_res["OOD"][1][1]["urq"]'''
 
     results = OrderedDict({"panoptic_seg": res})
     print_panoptic_results(pq_res)
@@ -579,11 +590,11 @@ def print_panoptic_results(pq_res):
     print("Panoptic Evaluation Results:\n" + table)
 
     if "OOD" in pq_res:
-        headers = ["", "UPQ", "USQ", "URQ", "#categories"]
+        headers = ["", "POD-Q", "SOD-Q", "ROD-Q", "#categories"]
         ood_data = []
-        ood_data.append(["All"] + [pq_res["OOD"][0][k] * 100 for k in ["upq", "usq", "urq"]] + [2])
-        ood_data.append(["IN_PIXELS"] + [pq_res["OOD"][1][0][k] * 100 for k in ["upq", "usq", "urq"]] + [1])
-        ood_data.append(["OUT_PIXELS"] + [pq_res["OOD"][1][1][k] * 100 for k in ["upq", "usq", "urq"]] + [1])
+        ood_data.append(["All"] + [pq_res["OOD"][k] * 100 for k in ["POD-Q", "SOD-Q", "ROD-Q"]] + [2])
+        ood_data.append(["IN_PIXELS"] + [pq_res["OOD"][k] * 100 for k in ["PQ-in", "SQ-in", "RQ-in"]] + [1])
+        ood_data.append(["OUT_PIXELS"] + [pq_res["OOD"][k] * 100 for k in ["PQ-out", "SQ-out", "RQ-out"]] + [1])
         ood_table = tabulate(
             ood_data, headers=headers, tablefmt="pipe", floatfmt=".3f", stralign="center", numalign="center"
                              )
@@ -631,10 +642,6 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
         del logits
         torch.cuda.empty_cache()
 
-        if count == 5:
-            break
-
-
     gt_path = evaluation_dataset.root
     result = {}
 
@@ -646,10 +653,10 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
                                                                                        "cityscapes_panoptic_" + evaluation_dataset.split + ".json"),
                                             os.path.join(gt_path, "gtFine",
                                                          "cityscapes_panoptic_" + evaluation_dataset.split), evaluate_ood)
-        instance_result = instance_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
+        #instance_result = instance_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
 
         result["panotic_seg"] = panoptic_result
-        result["instance_seg"] = instance_result
+        #result["instance_seg"] = instance_result
 
     if evaluate_anomoly and has_anomoly:
         anomoly_result = anomaly_evaluate(os.path.join(gt_path, "gtFine", evaluation_dataset.split))
