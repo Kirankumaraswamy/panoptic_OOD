@@ -648,3 +648,6 @@ _C.VIS_PERIOD = 0
 # Do not commit any configs into it.
 _C.GLOBAL = CN()
 _C.GLOBAL.HACK = 1.0
+
+# parameter to indicate if we are performin OOD training
+_C.OOD_TRAINING = False

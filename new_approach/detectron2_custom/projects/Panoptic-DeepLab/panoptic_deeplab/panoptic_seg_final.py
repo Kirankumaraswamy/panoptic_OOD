@@ -7,7 +7,7 @@ import fvcore.nn.weight_init as weight_init
 import torch
 from torch import nn
 from torch.nn import functional as F
-import os
+
 from detectron2.config import configurable
 from detectron2.data import MetadataCatalog
 from detectron2.layers import Conv2d, DepthwiseSeparableConv2d, ShapeSpec, get_norm
@@ -160,6 +160,32 @@ class PanopticDeepLab(nn.Module):
 
             ood_mask = None
 
+        if not self.training:
+            if hasattr(self, "evaluate_ood") and self.evaluate_ood:
+                ood_list = None
+                for sem_seg_result, input_per_image, image_size in zip(
+                        sem_seg_results, batched_inputs,
+                        images.image_sizes
+                ):
+                    height = input_per_image.get("height")
+                    width = input_per_image.get("width")
+
+                    ood = sem_seg_postprocess(sem_seg_result, image_size, height, width)
+
+                    if ood_list is None:
+                        ood_list = ood.unsqueeze(dim=0)
+                    else:
+                        ood_list = torch.cat((ood_list, ood.unsqueeze(dim=0)), 0)
+
+                prob = ood_list.max(dim=1)[0]
+                ood_mask = torch.zeros_like(prob)
+                ood_mask.to(prob.device)
+
+                anomaly_score = prob
+                anomaly_score = 1 - anomaly_score
+                ood_mask[anomaly_score > self.ood_threshold] = 1
+
+
         center_results, offset_results, center_losses, offset_losses = self.ins_embed_head(
             features, center_targets, center_weights, offset_targets, offset_weights, ood_mask
         )
@@ -183,12 +209,6 @@ class PanopticDeepLab(nn.Module):
             r = sem_seg_postprocess(sem_seg_result, image_size, height, width)
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
-            
-            if hasattr(self, "read_instance_path") and self.read_instance_path is not None:
-                c = np.load(os.path.join(self.read_instance_path, batched_inputs[0]["image_id"]+"_center.npy"))
-                o = np.load(os.path.join(self.read_instance_path, batched_inputs[0]["image_id"]+"_offset.npy"))
-                c = torch.tensor(c).to(r.device)
-                o = torch.tensor(o).to(r.device)
 
             ood = r
 
@@ -201,15 +221,11 @@ class PanopticDeepLab(nn.Module):
 
             if evaluate_ood:
                 prob = ood.max(dim=0)[0]
+
                 anomaly_score = prob.unsqueeze(dim=0)
                 anomaly_score = 1 - anomaly_score
                 sem_out = sem.clone()
                 sem_out[anomaly_score > self.ood_threshold] = 19
-
-                ood_mask = torch.zeros_like(sem_out)
-                ood_mask.to(prob.device)
-
-                ood_mask[anomaly_score > self.ood_threshold] = 1
 
             if hasattr(self, "performance_with_ood") and self.performance_with_ood == True:
                 prob = ood.max(dim=0)[0]
@@ -248,7 +264,6 @@ class PanopticDeepLab(nn.Module):
                     threshold=self.threshold,
                     nms_kernel=self.nms_kernel,
                     top_k=self.top_k,
-                    ood_mask = ood_mask,
                 )
 
             # For semantic segmentation evaluation.
@@ -607,6 +622,7 @@ class PanopticDeepLabSigmoidSemSegHead(DeepLabV3PlusHead):
         #weights[targets_temp == self.ignore_value] = 0
         weights[ood_mask == 1] = weights[ood_mask == 1] * 0.9
         weights[ood_mask == 0] = weights[ood_mask == 0] * 0.1
+
         weights = weights.unsqueeze(dim=1)
         weights = weights.repeat(1, 19, 1, 1)
 
@@ -634,7 +650,6 @@ def build_ins_embed_branch(cfg, input_shape):
     """
     name = cfg.MODEL.INS_EMBED_HEAD.NAME
     return INS_EMBED_BRANCHES_REGISTRY.get(name)(cfg, input_shape)
-
 
 @INS_EMBED_BRANCHES_REGISTRY.register()
 class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
@@ -744,6 +759,16 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         nn.init.normal_(self.offset_predictor.weight, 0, 0.001)
         nn.init.constant_(self.offset_predictor.bias, 0)
 
+        self.ood_center_head = copy.deepcopy(self.center_head)
+        self.ood_center_predictor = Conv2d(head_channels, 1, kernel_size=1)
+        nn.init.normal_(self.ood_center_predictor.weight, 0, 0.001)
+        nn.init.constant_(self.ood_center_predictor.bias, 0)
+
+        self.ood_offset_head = copy.deepcopy(self.offset_head)
+        self.ood_offset_predictor = Conv2d(head_channels, 2, kernel_size=1)
+        nn.init.normal_(self.ood_offset_predictor.weight, 0, 0.001)
+        nn.init.constant_(self.ood_offset_predictor.bias, 0)
+
 
         self.center_loss = nn.MSELoss(reduction="none")
         self.offset_loss = nn.L1Loss(reduction="none")
@@ -790,13 +815,13 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
             In training, returns (None, dict of losses)
             In inference, returns (CxHxW logits, {})
         """
-        center, offset = self.layers(features, ood_mask)
+        center, offset, ood_center, ood_offset = self.layers(features, ood_mask)
         if self.training:
             return (
                 None,
                 None,
-                self.center_losses(center, center_targets, center_weights, ood_mask),
-                self.offset_losses(offset, offset_targets, offset_weights, ood_mask),
+                self.center_losses(center, center_targets, center_weights, ood_center, ood_mask),
+                self.offset_losses(offset, offset_targets, offset_weights, ood_offset, ood_mask),
             )
         else:
             center = F.interpolate(
@@ -808,12 +833,47 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
                 )
                 * self.common_stride
             )
-                
+
+            if ood_center is not None:
+                ood_center = F.interpolate(
+                    ood_center, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+                )
+                ood_offset = (
+                        F.interpolate(
+                            ood_offset, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+                        )
+                        * self.common_stride
+                )
+                ood_mask = ood_mask.unsqueeze(dim=1)
+                center[ood_mask==1] = ood_center[ood_mask==1]
+                offset[ood_mask.repeat(1,2,1,1) == 1] = ood_offset[ood_mask.repeat(1,2,1,1) == 1]
+
             return center, offset, {}, {}
 
     def layers(self, features, ood_mask=None):
         assert self.decoder_only
         y = super().layers(features)
+
+        ood_center = None
+        ood_offset = None
+
+        if hasattr(self, "evaluate_ood") and self.evaluate_ood:
+
+            no_features = y.size()[1]
+            ood_mask = F.interpolate(
+                ood_mask.unsqueeze(dim=1), scale_factor=0.25, mode="nearest", recompute_scale_factor=True
+            )
+
+            ood_mask = ood_mask.repeat(1, no_features, 1, 1)
+            ood_y = torch.clone(y)
+            ood_y[ood_mask!=1] = 0
+            #y[ood_mask == 1] = 0
+
+            ood_center = self.ood_center_head(ood_y)
+            ood_center = self.ood_center_predictor(ood_center)
+            # offset
+            ood_offset = self.ood_offset_head(ood_y)
+            ood_offset = self.ood_offset_predictor(ood_offset)
 
         # center
         center = self.center_head(y)
@@ -822,23 +882,53 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         offset = self.offset_head(y)
         offset = self.offset_predictor(offset)
 
-        return center, offset
+        return center, offset, ood_center, ood_offset
 
-    def center_losses(self, predictions, targets, weights, ood_mask=None):
+    def center_losses(self, predictions, targets, weights, ood_predictions=None, ood_mask=None):
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
-        loss = self.center_loss(predictions, targets) * weights
 
-        if weights.sum() > 0:
-            loss = loss.sum() / weights.sum()
+        if ood_predictions != None:
+            ood_predictions = F.interpolate(
+                ood_predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+            )
+
+        if hasattr(self, "evaluate_ood") and self.evaluate_ood:
+            ood_mask = ood_mask.unsqueeze(dim=1)
+            weights_ood = torch.clone(weights)
+            weights_ood[ood_mask!=1] = 0
+            loss_ood = self.center_loss(ood_predictions, targets) * weights_ood
+
+            if weights_ood.sum() > 0:
+                loss_ood = loss_ood.sum() / weights_ood.sum()
+            else:
+                loss_ood = loss_ood.sum() * 0
+
+
+            weights[ood_mask == 1] = 0
+            loss = self.center_loss(predictions, targets) * weights
+
+            if weights.sum() > 0:
+                loss = loss.sum() / weights.sum()
+            else:
+                loss = loss.sum() * 0
+
+            #center_loss = loss * self.center_loss_weight + loss_ood * 20.0
+            center_loss = self.center_loss_weight * (loss + 0.1 * loss_ood)
+            losses = {"loss_center": center_loss}
+
         else:
-            loss = loss.sum() * 0
-        #print("center", loss, self.center_loss_weight)
-        losses = {"loss_center": loss * self.center_loss_weight}
+            loss = self.center_loss(predictions, targets) * weights
+
+            if weights.sum() > 0:
+                loss = loss.sum() / weights.sum()
+            else:
+                loss = loss.sum() * 0
+            losses = {"loss_center": loss * self.center_loss_weight}
         return losses
 
-    def offset_losses(self, predictions, targets, weights, ood_mask=None):
+    def offset_losses(self, predictions, targets, weights, ood_predictions=None, ood_mask=None):
         predictions = (
             F.interpolate(
                 predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
@@ -846,11 +936,40 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
             * self.common_stride
         )
 
-        loss = self.offset_loss(predictions, targets) * weights
-        if weights.sum() > 0:
-            loss = loss.sum() / weights.sum()
+        if ood_predictions != None:
+            ood_predictions = (
+                    F.interpolate(
+                        ood_predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+                    )
+                    * self.common_stride
+            )
+        if hasattr(self, "evaluate_ood") and self.evaluate_ood:
+            ood_mask = ood_mask.unsqueeze(dim=1)
+            weights_ood = torch.clone(weights)
+            weights_ood[ood_mask != 1] = 0
+            loss_ood = self.offset_loss(ood_predictions, targets) * weights_ood
+
+            if weights_ood.sum() > 0:
+                loss_ood = loss_ood.sum() / weights_ood.sum()
+            else:
+                loss_ood = loss_ood.sum() * 0
+
+            weights[ood_mask == 1] = 0
+            loss = self.offset_loss(predictions, targets) * weights
+            if weights.sum() > 0:
+                loss = loss.sum() / weights.sum()
+            else:
+                loss = loss.sum() * 0
+
+            offset_loss = self.offset_loss_weight * (loss + 0.3 * loss_ood)
+            #offset_loss = loss * self.offset_loss_weight + loss_ood * 0.005
+            losses = {"loss_offset": offset_loss}
         else:
-            loss = loss.sum() * 0
-        #print("offset", loss, self.center_loss_weight)
-        losses = {"loss_offset": loss * self.offset_loss_weight}
+            loss = self.offset_loss(predictions, targets) * weights
+            if weights.sum() > 0:
+                loss = loss.sum() / weights.sum()
+            else:
+                loss = loss.sum() * 0
+            losses = {"loss_offset": loss * self.offset_loss_weight}
         return losses
+
