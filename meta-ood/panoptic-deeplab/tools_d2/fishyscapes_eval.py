@@ -12,7 +12,7 @@ import torchvision.transforms as standard_transforms
 from PIL import Image
 import tensorflow as tf
 
-from config import config_evaluation_setup
+#from config import config_evaluation_setup
 from src.imageaugmentations import Compose, Normalize, ToTensor, RandomCrop, RandomHorizontalFlip
 from src.model_utils import load_network
 from torch.utils.data import DataLoader
@@ -23,6 +23,13 @@ from detectron2.projects.panoptic_deeplab import (
 from detectron2.projects.deeplab import add_deeplab_config
 from detectron2.config import get_cfg
 import config as meta_ood_config
+import ood_config
+
+import ood_config
+from detectron2.modeling import build_model
+from detectron2.checkpoint import DetectionCheckpointer
+import _init_paths
+import d2
 
 
 class AnomalyDetector():
@@ -38,10 +45,10 @@ class AnomalyDetector():
         output = self.network(input)
 
         if isinstance(output, list):
-            sem_out = F.softmax(output[0]['sem_seg'], 0)
+            sem_out = F.softmax(output[0]['sem_score'], 0)
             sem_out = sem_out.detach().cpu().numpy()
             # ent = np.max(sem_out, axis=0)
-            ent = entropy(sem_out, axis=0) / np.log(self.dataset.num_eval_classes)
+            ent = entropy(sem_out, axis=0) / np.log(19)
         else:
             sem_out = F.softmax(output[0])
 
@@ -72,19 +79,17 @@ class AnomalyDetector():
                 x = x.unsqueeze(0)
         else:
             x = np.array(Image.fromarray(np.array(x)).convert('RGB').resize((2048, 1024))).astype('uint8')
-            x = Image.fromarray(x)
-            x = standard_transforms.ToTensor()(x)
-            x = standard_transforms.Normalize(self.dataset.mean, self.dataset.std)(x)
+            x = torch.as_tensor(np.ascontiguousarray(x.transpose(2, 0, 1)))
             x = [{"image": x, "height": x.size()[1], "width": x.size()[2]}]
         return x
 
 
 def main(args):
-    config = config_evaluation_setup(args.default_args)
-    roots = config.roots
-    params = config.params
-    start_epoch = params.val_epoch
-    dataset = config.dataset(root=config.roots.eval_dataset_root, model=config.roots.model_name)
+    #config = config_evaluation_setup(args.default_args)
+    #roots = config.roots
+    #params = config.params
+    #start_epoch = params.val_epoch
+    #dataset = config.dataset(root=config.roots.eval_dataset_root, model=config.roots.model_name)
 
     '''# load configuration from cfg files for detectron2
     cfg = get_cfg()
@@ -110,30 +115,46 @@ def main(args):
     # This parameter is needed for panoptic segmentation data loading
     dataset_cfg = None
 
-    # load configuration from cfg files for detectron2
-    cfg = get_cfg()
-
-    start_epoch = 0
-
-    add_panoptic_deeplab_config(cfg)
-
     '''cfg.merge_from_file("/home/kumarasw/Thesis/meta-ood/src/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024.yaml")
     model_name = "Detectron_Panoptic_DeepLab"    
     init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"'''
 
-    model_name = "Detectron_DeepLab"
-    cfg.merge_from_file(
-        "/home/kumarasw/Thesis/meta-ood/src/config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml")
-    init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/Detectron_DeepLab_epoch_4_alpha_0.9.pth"
+    model_name = ood_config.model_name
+    config_file = ood_config.config_file
+    print(config_file)
+    ckpt_path = ood_config.init_ckpt
+    
 
     '''model_name = "DeepLabV3+_WideResNet38"
     init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/DeepLabV3+_WideResNet38_epoch_4_alpha_0.9.pth"
-    #init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/cityscapes_best.pth"'''
+    #init_ckpt = "/home/kumarasw/Thesis/meta-ood/weights/cityscapes_best.pth"
 
-    """Initialize model"""
-    if start_epoch == 0:
-        network = load_network(model_name=model_name, num_classes=19,
-                               ckpt_path=init_ckpt, train=False, cfg=cfg)
+    network = load_network(model_name=model_name, num_classes=19,
+                               ckpt_path=init_ckpt, train=False, cfg=cfg)'''
+
+    print("Checkpoint file:", ckpt_path)
+    print("Load model:", model_name, end="", flush=True)
+
+    if model_name == "Detectron_DeepLab" or model_name == "Detectron_Panoptic_DeepLab":
+        cfg = get_cfg()
+        if model_name == "Detectron_DeepLab":
+            add_deeplab_config(cfg)
+            cfg.merge_from_file(ood_config.config_file)
+        elif model_name == "Detectron_Panoptic_DeepLab":
+            add_panoptic_deeplab_config(cfg)
+            cfg.merge_from_file(ood_config.config_file)
+        network = build_model(cfg)
+        #network = torch.nn.DataParallel(network).cuda()
+        DetectionCheckpointer(network).resume_or_load(
+            ckpt_path, resume=False
+        )
+    else:
+        network = nn.DataParallel(DeepWV3Plus(num_classes))
+        network.load_state_dict(torch.load(ckpt_path)['model'], strict=False)
+
+    network = network.cuda()
+    network.eval()
+
 
     import bdlb
     tf_config = tf.compat.v1.ConfigProto()
@@ -149,8 +170,8 @@ def main(args):
     # ds = tfds.load('Static')
 
     # data = fs.get_dataset('Static')
-    transform = Compose([ToTensor(), Normalize(config.dataset.mean, config.dataset.std)])
-    detector = AnomalyDetector(network, config.dataset, transform, model_name)
+    #transform = Compose([ToTensor(), Normalize(mean, std)])
+    detector = AnomalyDetector(network, None, None, model_name)
     metrics = fs.evaluate(detector.estimator_worker, ds)
 
     print('My method achieved {:.2f}% AP'.format(100 * metrics['AP']))
