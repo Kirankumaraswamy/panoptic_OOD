@@ -29,15 +29,18 @@ def panoptic_deep_lab_collate(batch):
     target = [item[1] for item in batch]
     # target = torch.stack(target)
     return data, target
-
-'''def build_sem_seg_train_aug(cfg):
+'''
+def build_sem_seg_train_aug(cfg):
     augs = [
-        T.ResizeShortestEdge(
-            cfg.INPUT.MIN_SIZE_TRAIN, cfg.INPUT.MAX_SIZE_TRAIN, cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
+        T.ResizeScale(
+            1.0, 2.0, 720, 1280
         )
     ]
     if cfg.INPUT.CROP.ENABLED:
+        if min(cfg.INPUT.CROP.SIZE) > min(cfg.INPUT.MIN_SIZE_TRAIN):
+            augs.append(T.MyOpTransform(cfg.INPUT.CROP.SIZE))
         augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
+
     augs.append(T.RandomFlip())
     return augs'''
 
@@ -112,7 +115,7 @@ def training_routine(config):
     print("START OOD TRAINING")
     params = config.params
     roots = config.roots
-    dataset = config.dataset(split="train", cs_root=roots.cs_root, coco_root=roots.coco_root, cs_split="train", coco_split="val")
+    #dataset = config.dataset(split="train", cs_root=roots.cs_root, coco_root=roots.coco_root, cs_split="train", coco_split="val")
     print("Pareto alpha:", params.pareto_alpha)
     start_epoch = params.training_starting_epoch
     epochs = params.num_training_epochs
@@ -133,7 +136,7 @@ def training_routine(config):
 
     """Initialize model"""
     if start_epoch == 0:
-        network = load_network(model_name=roots.model_name, num_classes=dataset.num_classes,
+        network = load_network(model_name=roots.model_name, num_classes=19,
                                ckpt_path=roots.init_ckpt, train=True, cfg=cfg)
     else:
         basename = roots.model_name + "_epoch_" + str(start_epoch) \
@@ -141,19 +144,21 @@ def training_routine(config):
         network = load_network(model_name=roots.model_name, num_classes=dataset.num_classes,
                                ckpt_path=os.path.join(roots.weights_dir, basename), train=True, cfg=cfg)
 
-    transform = Compose([RandomHorizontalFlip(), RandomCrop(params.crop_size), ToTensor(),
-                         Normalize(dataset.mean, dataset.std)])
 
     cr_loss = torch.nn.CrossEntropyLoss(ignore_index=255, reduction="none")
     optimizer = optim.Adam(network.parameters(), lr=params.learning_rate)
 
     if roots.model_name == "Detectron_Panoptic_DeepLab":
+
         trainloader = CityscapesOOD(root=roots.cs_root, split="train", cfg=dataset_cfg,
-                                    transform=build_sem_seg_train_aug(dataset_cfg), dataset=config.dataset)
+                                    transform=build_sem_seg_train_aug(dataset_cfg), dataset="cityscapes")
 
         dataloader = DataLoader(trainloader, batch_size=params.batch_size, shuffle=True,
                                 collate_fn=panoptic_deep_lab_collate, num_workers=0)
     else:
+        '''transform = Compose([RandomHorizontalFlip(), RandomCrop(params.crop_size), ToTensor(),
+                         Normalize(dataset.mean, dataset.std)])'''
+
         trainloader = config.dataset('train', transform, roots.cs_root, roots.coco_root, params.ood_subsampling_factor,
                                      cs_split="train", coco_split="val", cfg=dataset_cfg, model="detectron")
         dataloader = DataLoader(trainloader, batch_size=params.batch_size, shuffle=True,
@@ -173,12 +178,11 @@ def training_routine(config):
             logits, losses = network(x)
             #logits = network(x.cuda())
             logits = logits["sem_seg_results"]
-
-            import matplotlib.pyplot as plt
+            '''import matplotlib.pyplot as plt
             plt.imshow(x[0]["image"].permute(1, 2, 0).numpy())
             #plt.imshow(x[0].permute(1, 2, 0).numpy())
             plt.show()
-            '''out = torch.squeeze(logits[0]).detach().cpu().numpy().argmax(axis=0)
+            out = torch.squeeze(logits[0]).detach().cpu().numpy().argmax(axis=0)
             plt.imshow(out)
             plt.show()
             plt.imshow(x[0]["center"].squeeze().numpy())
@@ -188,8 +192,8 @@ def training_routine(config):
             plt.imshow(torch.squeeze(target[0]["sem_seg"]).numpy())
             plt.show()'''
 
-            y = encode_target(target=target, pareto_alpha=params.pareto_alpha, num_classes=dataset.num_classes,
-                              ignore_train_ind=dataset.void_ind, ood_ind=dataset.train_id_out).cuda()
+            y = encode_target(target=target, pareto_alpha=params.pareto_alpha, num_classes=19,
+                              ignore_train_ind=255, ood_ind=19).cuda()
 
             ''' plt.imshow(np.max(torch.squeeze(y[0]).cpu().numpy(), axis=0))
             plt.show()'''
@@ -199,14 +203,14 @@ def training_routine(config):
             loss_offset = losses["loss_offset"]
             
             loss = loss_seg + loss_center + loss_offset
-            print(loss_seg.item(), loss_center.item(), loss_offset.item())
             #loss1 = cross_entropy(logits, y)
             #print(loss1)
             loss.backward()
             optimizer.step()
-            print('{} Loss: {}'.format(i, loss.item()))
+            print('{} Loss: {}, sem_loss: {}, center_loss: {}, offset_loss:{}'.format(i, loss.item(), loss_seg.item(), loss_center.item(), loss_offset.item()))
             i += 1
-
+            del logits
+            torch.cuda.empty_cache()
         """Save model state"""
         save_basename = roots.model_name + "_epoch_" + str(epoch + 1) + "_alpha_" + str(params.pareto_alpha) + ".pth"
         print('Saving checkpoint', os.path.join(roots.weights_dir, save_basename))
@@ -242,6 +246,7 @@ if __name__ == '__main__':
     args = default_argument_parser().parse_args()
     #args from current file
     args.default_args = vars(parser.parse_args())
+    args.dist_url = 'tcp://127.0.0.1:64486'
     print("Command Line Args:", args)
     launch(
         main,

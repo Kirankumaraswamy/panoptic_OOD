@@ -15,7 +15,7 @@ from detectron2.projects.panoptic_deeplab import (
 from detectron2.projects.deeplab import add_deeplab_config
 from detectron2.config import get_cfg
 from dataset.cityscapes_ood import CityscapesOOD
-import config
+import config_partial_training as config
 from detectron2.modeling import build_model
 from detectron2.checkpoint import DetectionCheckpointer
 
@@ -34,6 +34,7 @@ from detectron2.solver import get_default_optimizer_params
 from detectron2.solver.build import maybe_add_gradient_clipping
 import detectron2.data.transforms as T
 import matplotlib.pyplot as plt
+
 import _init_paths
 import d2
 
@@ -44,7 +45,7 @@ def panoptic_deep_lab_collate(batch):
     return data, target
 
 
-def build_sem_seg_train_aug(cfg):
+'''def build_sem_seg_train_aug(cfg):
     augs = [
         T.ResizeShortestEdge(
             cfg.INPUT.MIN_SIZE_TRAIN, cfg.INPUT.MAX_SIZE_TRAIN, cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
@@ -55,8 +56,20 @@ def build_sem_seg_train_aug(cfg):
         augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
 
     augs.append(T.RandomFlip())
-    return []
+    return augs'''
 
+def build_sem_seg_train_aug(cfg):
+    augs = [
+        T.ResizeShortestEdge(
+            cfg.INPUT.MIN_SIZE_TRAIN, cfg.INPUT.MAX_SIZE_TRAIN, cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
+        )
+    ]
+    if cfg.INPUT.CROP.ENABLED:
+        if min(cfg.INPUT.CROP.SIZE) > min(cfg.INPUT.MIN_SIZE_TRAIN):
+            augs.append(T.MyOpTransform(cfg.INPUT.CROP.SIZE))
+        augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
+    augs.append(T.RandomFlip())
+    return augs
 
 def build_optimizer(cfg, model):
     """
@@ -98,6 +111,8 @@ def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
     total_loss_offset = 0
     total_uncertainity_loss = 0
     network = network.train()
+    network.module.sem_seg_head.ood_train = True
+    network.module.ins_embed_head.ood_train = True
 
     global batch_loss
     global batch_center_loss
@@ -144,7 +159,7 @@ def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
         #batch_uncertainity_loss += loss_dict_reduced['uncertainity_loss']
         batch_uncertainity_loss += 0
 
-        scheduler.step()
+        #scheduler.step()
 
         if comm.is_main_process():
             print("\rEpoch {} , iteration: {} :Train Progress: {:>3.2f} % : Batch loss: {}, i: {}/{}".format(epoch, iteration,((i + 1) * 100) / len(dataloader_train),losses_reduced, i, len(dataloader_train)), end=' ')
@@ -152,9 +167,9 @@ def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
             if (iteration + 1) % 20 == 0:
                 with open("./status_" + config.suffix + ".txt", "a") as f:
                     f.write(
-                        "\nEpoch {}, iteration: {}, total_loss: {}, loss_sem_seg: {}, loss_center: {}, loss_offset: {}, lr: {}".format(
+                        "\nEpoch {}, iteration: {}, total_loss: {}, loss_sem_seg: {}, loss_center: {}, loss_offset: {}".format(
                             epoch, iteration, batch_loss / 20, batch_semantic_loss / 20, batch_center_loss / 20,
-                            batch_offset_loss / 20, scheduler.get_last_lr()))
+                            batch_offset_loss / 20))
                     '''f.write("\nEpoch {}, iteration: {}, total_loss: {}, loss_sem_seg: {}, loss_center: {}, loss_offset: {}, lr: {}".format(epoch, iteration, losses_reduced, loss_dict_reduced['loss_sem_seg'], loss_dict_reduced['loss_center'], loss_dict_reduced['loss_offset'], scheduler.get_last_lr()))'''
                 batch_loss = 0
                 batch_center_loss = 0
@@ -162,9 +177,9 @@ def train_model(network, dataloader_train, optimizer, scheduler, epoch=None):
                 batch_semantic_loss = 0
                 batch_uncertainity_loss = 0
             iteration += 1
+
         #del loss_dict, loss_dict_reduced, losses_reduced, losses
         #torch.cuda.empty_cache()
-
     loss = {
         "loss_total": total_loss / (i + 1),
         "loss_sem_seg": total_loss_seg / (i + 1),
@@ -183,6 +198,7 @@ def eval_model(network, dataloader_val, epoch=None):
     total_loss_offset = 0
     total_uncertainity_loss = 0
     network = network.train()
+    network.sem_seg_head.ood_train = False
     for i, (x, target) in enumerate(dataloader_val):
         # print("Eval : len of data loader: ", len(dataloader_val))
 
@@ -206,6 +222,9 @@ def eval_model(network, dataloader_val, epoch=None):
                                                                                              losses_reduced, i,
                                                                                              len(dataloader_val)),
                   end=' ')
+
+        del loss_dict, loss_dict_reduced, losses_reduced, losses
+        torch.cuda.empty_cache()
 
     loss = {
         "loss_total": total_loss / (i + 1),
@@ -245,7 +264,7 @@ def training_routine(args, network, dataset_cfg):
     scheduler = build_lr_scheduler(dataset_cfg, optimizer)
 
     checkpointer = DetectionCheckpointer(
-        network, ckpt_path, optimizer=optimizer, scheduler=scheduler
+        network, ckpt_path
     )
 
     if ckpt_path is not None:
@@ -258,11 +277,36 @@ def training_routine(args, network, dataset_cfg):
         checkpointer.resume_or_load(
             dataset_cfg.MODEL.WEIGHTS, resume=False
         )
+    
+    #optimizer = optim.Adam(network.module.parameters(), lr=config.learning_rate)
+    #scheduler = None
+
+    # set all paraams require grad to False
+    for param in network.module.parameters():
+        param.requires_grad = False
+
+    for p in network.module.sem_seg_head.head.parameters():
+        p.requires_grad = True
+
+    for p in network.module.sem_seg_head.predictor.parameters():
+        p.requires_grad = True
+    
+    for p in network.module.ins_embed_head.center_head.parameters():
+        p.requires_grad = True
+
+    for p in network.module.ins_embed_head.center_predictor.parameters():
+        p.requires_grad = True
+
+    for p in network.module.ins_embed_head.offset_head.parameters():
+        p.requires_grad = True
+
+    for p in network.module.ins_embed_head.offset_predictor.parameters():
+        p.requires_grad = True
 
     dataset_train = CityscapesOOD(root=config.dataset_path, split=config.split, cfg=dataset_cfg,
-                                  transform=build_sem_seg_train_aug(dataset_cfg), dataset=config.dataset)
+                                  transform=build_sem_seg_train_aug(dataset_cfg), dataset=config.dataset, ood_training=True)
     dataset_val = CityscapesOOD(root=config.dataset_path, split="val", cfg=dataset_cfg,
-                                transform=build_sem_seg_train_aug(dataset_cfg), dataset=config.dataset)
+                                transform=None, dataset=config.dataset)
 
     train_sampler = DistributedSampler(dataset_train, num_replicas=comm.get_world_size(), rank=comm.get_rank())
     val_sampler = DistributedSampler(dataset_val, num_replicas=comm.get_world_size(), rank=comm.get_rank())
@@ -275,7 +319,7 @@ def training_routine(args, network, dataset_cfg):
     dataloader_train = DataLoader(dataset_train, batch_size=config.batch_size, shuffle=False,
                                   collate_fn=panoptic_deep_lab_collate, num_workers=10, sampler=train_sampler)
     dataloader_val = DataLoader(dataset_val, batch_size=config.batch_size, shuffle=False,
-                                collate_fn=panoptic_deep_lab_collate, num_workers=0, sampler=val_sampler)
+                                collate_fn=panoptic_deep_lab_collate, num_workers=10, sampler=val_sampler)
 
     losses_total_train = []
     losses_total_val = []
@@ -294,16 +338,21 @@ def training_routine(args, network, dataset_cfg):
 
         network.train()
         train_loss = train_model(network, dataloader_train, optimizer, scheduler, epoch)
+        torch.cuda.empty_cache()
         #val_loss = eval_model(network, dataloader_val, epoch)
+        val_loss = train_loss
         if comm.is_main_process():
             with open("./status_" + config.suffix + ".txt", "a") as f:
-                f.write("\nEpoch {} with Train loss = {}".format(epoch, train_loss['loss_total']))
-            print("\rEpoch {} with Train loss = {}".format(epoch, train_loss['loss_total']))
+                f.write("\nEpoch {} with Train loss = {}, loss_sem_seg: {}, loss_center: {}, loss_offset: {}".format(epoch, train_loss['loss_total']
+                    , train_loss["loss_sem_seg"], train_loss["loss_center"], train_loss["loss_offset"]))
+            print("\rEpoch {} with Train loss = {} , Val loss = {}".format(epoch, train_loss['loss_total'], val_loss["loss_total"]))
         losses_total_train.append(train_loss["loss_total"])
         losses_seg.append(train_loss["loss_sem_seg"])
         losses_center.append(train_loss["loss_center"])
         losses_offset.append(train_loss["loss_offset"])
         losses_uncertainity.append(train_loss["loss_uncertainity"])
+
+        torch.cuda.empty_cache()
 
         if comm.is_main_process():
             '''if False and val_loss["loss_total"] < best_val_loss:
@@ -328,14 +377,13 @@ def training_routine(args, network, dataset_cfg):
                 #result["panotic_seg"]["panoptic_seg"]["PQ"])
             '''
 
-            if (epoch) % 20 == 0:
+            if (epoch) % 2 == 0:
                 """Save model state"""
                 save_basename = config.model_name + "_model_" + config.suffix + "_" + str(epoch) + ".pth"
                 torch.save({
                     'model': network.state_dict(),
                     'epoch': epoch,
                     'optimizer': optimizer.state_dict(),
-                    'scheduler': scheduler.state_dict(),
                 }, os.path.join(config.weights_dir, save_basename))
 
         torch.cuda.empty_cache()
@@ -393,7 +441,7 @@ def main(args):
     import resource
     rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
-    
+
     if not os.path.exists(config.weights_dir):
         os.makedirs(config.weights_dir)
 
@@ -402,9 +450,9 @@ def main(args):
 
     distributed = comm.get_world_size() > 1
     if distributed:
-        network = create_ddp_model(network, broadcast_buffers=False)
+        network = create_ddp_model(network, broadcast_buffers=False, find_unused_parameters=True)
         '''network = DistributedDataParallel(
-            network, device_ids=[comm.get_local_rank()], broadcast_buffers=False
+            network, device_ids=[comm.get_local_rank()], broadcast_buffers=False  find_unused_parameters=True
         )'''
 
     """Perform training"""
@@ -426,7 +474,7 @@ if __name__ == '__main__':
     args = default_argument_parser().parse_args()
     # args from current file
     args.default_args = vars(parser.parse_args())
-    args.dist_url = 'tcp://127.0.0.1:64485'
+    args.dist_url = 'tcp://127.0.0.1:64487'
     print("Command Line Args:", args)
     launch(
         main,

@@ -1,7 +1,7 @@
 import os
-from src.dataset.cityscapes_coco_mixed import CityscapesCocoMix
-from src.dataset.lost_and_found import LostAndFound
-from src.dataset.fishyscapes import Fishyscapes
+#from src.dataset.cityscapes_coco_mixed import CityscapesCocoMix
+#from src.dataset.lost_and_found import LostAndFound
+#from src.dataset.fishyscapes import Fishyscapes
 
 TRAINSETS   = ["Cityscapes+COCO"]
 VALSETS     = ["LostAndFound", "Fishyscapes"]
@@ -11,9 +11,14 @@ TRAINSET    = TRAINSETS[0]
 VALSET      = VALSETS[1]
 MODEL       = MODELS[3]
 #IO          = "/home/chan/io/ood_detection/"
-IO = "/home/kumarasw/Thesis/panoptic_OOD/meta-ood/results"
-Detectron_PanopticDeepLab_Config = "/home/kumarasw/Thesis/panoptic_OOD/meta-ood/panoptic-deeplab/tools_d2/src/config/panopticDeeplab/panoptic_deeplab_X_65_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
+IO = "/home/mohan/kiran/ponoptic_OOD/meta-ood/results"
+Detectron_PanopticDeepLab_Config = "/home/mohan/kiran/ponoptic_OOD/meta-ood/panoptic-deeplab/tools_d2/configs/Cityscapes-PanopticSegmentation/panoptic_deeplab_X_65_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
 Detectron_DeepLab_Config = "/home/mohan/kiran/ponoptic_OOD/meta-ood/src/config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml"
+
+
+no_gpus = 1
+
+os.environ["CUDA_VISIBLE_DEVICES"] ="0"
 
 class cs_coco_roots:
     """
@@ -22,14 +27,16 @@ class cs_coco_roots:
     model_name  = MODEL
     #init_ckpt = "/home/kumarasw/original-meta/meta-ood/weights/cityscapes_best.pth"
     #init_ckpt   = "/home/mohan/kiran/ponoptic_OOD/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
-    init_ckpt = "/home/kumarasw/Thesis/panoptic_OOD/meta-ood/panoptic-deeplab/tools_d2/weights/panoptic_deeplab_X_65_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.pth"
-    cs_root     = "/export/kiran/cityscapes/"
-    coco_root   = "/export/kiran/coco/2017/"
-    io_root     = IO + "meta_ood_" + model_name
+    init_ckpt = "/home/mohan/kiran/ponoptic_OOD/meta-ood/panoptic-deeplab/tools_d2/weights/panoptic_deeplab_X_65_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.pth"
+    #init_ckpt = "/home/mohan/kiran/ponoptic_OOD/meta-ood/panoptic-deeplab/tools_d2/weights/bdd_xception_bs16_512_1024_0124999.pth"
+    cs_root = "/home/mohan/kiran/cityscapes_ood/cityscapes/"
+    #cs_root     = "/home/mohan/kiran/bdd_ood_train/bdd_ood/cityscapes/"
+    coco_root   = "/home/mohan/kiran/dataset/coco/2017/"
+    io_root     = IO + "final_meta_ood_" + model_name
     weights_dir = os.path.join(io_root, "weights/")
 
 
-class laf_roots:
+'''class laf_roots:
     """
     LostAndFound config class
     """
@@ -58,20 +65,20 @@ class fs_roots:
     eval_sub_dir = "fs_eval"
     io_root = os.path.join("/home/kumarasw/Thesis/meta-ood/")
     weights_dir = os.path.join(io_root, "weights/")
-
+'''
 
 class params:
     """
     Set pipeline parameters
     """
     training_starting_epoch = 0
-    num_training_epochs     = 4
+    num_training_epochs     = 8
     pareto_alpha            = 0.9
     ood_subsampling_factor  = 0.1
     learning_rate           = 1e-5
     crop_size               = (512, 1024)
     val_epoch               = num_training_epochs
-    batch_size              = 2
+    batch_size              = 4
     entropy_threshold       = 0.7
 
 
@@ -89,7 +96,7 @@ class config_training_setup(object):
             self.TRAINSET = TRAINSET
         if self.TRAINSET == "Cityscapes+COCO":
             self.roots = cs_coco_roots
-            self.dataset = CityscapesCocoMix
+            #self.dataset = CityscapesCocoMix
         else:
             print("TRAINSET not correctly specified... bye...")
             exit()
@@ -112,7 +119,7 @@ class config_training_setup(object):
                 print("Create directory:", attr)
                 os.makedirs(attr)
 
-
+'''
 class config_evaluation_setup(object):
     """
     Setup config class for evaluation
@@ -141,3 +148,4 @@ class config_evaluation_setup(object):
                 print("Create directory:", attr)
                 os.makedirs(attr)
 
+'''

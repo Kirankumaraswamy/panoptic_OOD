@@ -600,23 +600,23 @@ def print_panoptic_results(pq_res):
                              )
         print("OOD Panoptic Evaluation Results:\n" + ood_table)
 
-        print("Total number of in-distribution instances: ", pq_res["OOD"][1][0]["no_instances"])
-        print("Number of in-distribution instances correctly identified (true positives): ", pq_res["OOD"][1][0]["correct_instances"])
-        print("Number of in-distribution instances wrongly identified (false positives): ", pq_res["OOD"][1][0]["false_instances"])
-        print("Total number of out-distribution instances: ", pq_res["OOD"][1][1]["no_instances"])
-        print("Number of out-distribution instances correctly identified (true positives): ", pq_res["OOD"][1][1]["correct_instances"])
-        print("Number of out-distribution instances wrongly identified (false positives): ", pq_res["OOD"][1][1]["false_instances"])
-
+        print("Total number of in-distribution instances: ", pq_res["OOD"]["in_no_instances"])
+        print("Number of in-distribution instances correctly identified (true positives): ", pq_res["OOD"]["in_correct_instances"])
+        print("Number of in-distribution instances wrongly identified (false positives): ", pq_res["OOD"]["in_false_instances"])
+        print("Total number of out-distribution instances: ", pq_res["OOD"]["out_no_instances"])
+        print("Number of out-distribution instances correctly identified (true positives): ", pq_res["OOD"]["out_correct_instances"])
+        print("Number of out-distribution instances wrongly identified (false positives): ", pq_res["OOD"]["out_false_instances"])
+        
 
 def data_load(root=None, split="val", transform=None):
     datset = CityscapesOOD(root, split, transform)
     return datset
 
 
-def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate_fn=None, evaluate_ood=True, semantic_only=False, evaluate_anomoly=True):
+def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, num_workers=0, collate_fn=None, evaluate_ood=True, semantic_only=False, evaluate_anomoly=True):
     global working_dir, instance_working_dir, anomaly_working_dir
     dataloader = DataLoader(evaluation_dataset, batch_size=batch_size,
-                            collate_fn=collate_fn)
+                            collate_fn=collate_fn, num_workers=num_workers)
     predictions = []
     predictions_ood = []
     has_anomoly = False
@@ -641,7 +641,7 @@ def data_evaluate(estimator=None, evaluation_dataset=None, batch_size=1, collate
             instance_process(inputs, logits)
         del logits
         torch.cuda.empty_cache()
-
+        
     gt_path = evaluation_dataset.root
     result = {}
 

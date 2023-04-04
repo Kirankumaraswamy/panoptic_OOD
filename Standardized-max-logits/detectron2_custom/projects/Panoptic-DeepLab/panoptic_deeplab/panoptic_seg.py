@@ -23,6 +23,7 @@ from detectron2.utils.registry import Registry
 
 from .post_processing import get_panoptic_segmentation
 import matplotlib.pyplot as plt
+import os
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -158,6 +159,12 @@ class PanopticDeepLab(nn.Module):
             r = sem_seg_postprocess(sem_seg_result, image_size, height, width)
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
+            
+            if hasattr(self, "read_instance_path") and self.read_instance_path is not None:
+                c = np.load(os.path.join(self.read_instance_path, batched_inputs[0]["image_id"]+"_center.npy"))
+                o = np.load(os.path.join(self.read_instance_path, batched_inputs[0]["image_id"]+"_offset.npy"))
+                c = torch.tensor(c).to(r.device)
+                o = torch.tensor(o).to(r.device)
 
             sem = r.argmax(dim=0, keepdim=True)
             if hasattr(self, "evaluate_ood"):
@@ -175,13 +182,28 @@ class PanopticDeepLab(nn.Module):
                                                 anomaly_score)
 
                 anomaly_score = anomaly_score * -1
-
-                '''anom = torch.absolute(anomaly_score)
-                anom = torch.absolute(anom) / torch.absolute(anom).max()
-                plt.imshow(torch.squeeze(anom).detach().cpu().numpy())
-                plt.show()'''
+                min_val = anomaly_score.min()
+                anomaly_score += torch.abs(min_val)
+                anomaly_score = anomaly_score / anomaly_score.max()
                 sem_out = sem.clone()
                 sem_out[anomaly_score > self.ood_threshold] = 19
+
+            if hasattr(self, "performance_with_ood") and self.performance_with_ood == True:
+                if self.class_mean is None or self.class_var is None:
+                    raise Exception("Class mean and var are not set!")
+                anomaly_score, prediction = r.max(dim=0)
+                for cls in range(19):
+                    anomaly_score = torch.where(sem == cls,
+                                                (anomaly_score - self.class_mean[cls]) / np.sqrt(self.class_var[cls]),
+                                                anomaly_score)
+
+                anomaly_score = anomaly_score * -1
+                min_val = anomaly_score.min()
+                anomaly_score += torch.abs(min_val)
+                anomaly_score = anomaly_score / anomaly_score.max()
+
+                sem[anomaly_score > self.ood_threshold] = -1
+
 
             # Post-processing to get panoptic segmentation.
             panoptic_image, _ = get_panoptic_segmentation(

@@ -1,6 +1,7 @@
 _BASE_: Base-PanopticDeepLab-OS16.yaml
 MODEL:
-  WEIGHTS: "x65.pkl"
+  #WEIGHTS: "x65.pkl"
+  WEIGHTS: "./weights/panoptic_deeplab_X_65_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.pth"
   PIXEL_MEAN: [128, 128, 128]
   PIXEL_STD: [128, 128, 128]
   BACKBONE:
@@ -13,13 +14,15 @@ MODEL:
     USE_DEPTHWISE_SEPARABLE_CONV: True
   SEM_SEG_HEAD:
     USE_DEPTHWISE_SEPARABLE_CONV: True
+    NAME: "PanopticDeepLabSemSegHead"
 SOLVER:
-  MAX_ITER: 90000
+  MAX_ITER: 18600
+  CHECKPOINT_PERIOD: 1860
+  BASE_LR: 0.0005
+  IMS_PER_BATCH: 8
 INPUT:
   FORMAT: "RGB"
-  MIN_SIZE_TEST: 720
-  MAX_SIZE_TRAIN: 2560
-  MAX_SIZE_TEST: 1280
   CROP:
-    #SIZE: (512, 1024)
-    SIZE: None
+    SIZE: (1024,2048)
+
+OUTPUT_DIR: "./experiment_results/final_experiments/softmax_ood_retraining"

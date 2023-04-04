@@ -4,7 +4,7 @@ apex
 astor==0.8.1
 attrs==19.3.0
 backcall==0.1.0
-bdlb
+#bdlb
 bleach==3.1.1
 cachetools==4.0.0
 captum==0.2.0
@@ -64,7 +64,7 @@ networkx==2.4
 notebook==6.0.3
 numpy==1.18.3
 oauthlib==3.1.0
-onnx==1.7.0
+#onnx==1.7.0
 onnxruntime
 opencv-python
 opt-einsum==3.1.0

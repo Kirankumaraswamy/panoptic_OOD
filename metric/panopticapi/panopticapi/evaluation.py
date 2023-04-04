@@ -51,6 +51,9 @@ class PQStat():
     def pq_average(self, categories, isthing):
         pq, sq, rq, n = 0, 0, 0, 0
         per_class_results = {}
+        no_instances = 0
+        correct_instances = 0
+        false_instances = 0
         for label, label_info in categories.items():
             if label_info["name"] == "OOD":
                 continue
@@ -74,7 +77,11 @@ class PQStat():
             sq += sq_class
             rq += rq_class
 
-        return {'pq': pq / n, 'sq': sq / n, 'rq': rq / n, 'n': n}, per_class_results
+            no_instances += (tp + fn)
+            correct_instances += tp
+            false_instances += fp
+
+        return {'pq': pq / n, 'sq': sq / n, 'rq': rq / n, 'n': n, 'no_instances': no_instances, "correct_instances": correct_instances, "false_instances": false_instances}, per_class_results
 
     def pq_ood(self, categories):
         pq, sq, rq, n = 0, 0, 0, 0
@@ -94,7 +101,7 @@ class PQStat():
                 sq_class = iou / tp if tp != 0 else 0
                 rq_class = tp / (tp + 0.5 * fp + 0.5 * fn)
 
-                ood_result = {'pq': pq_class, 'sq': sq_class, 'rq': rq_class}
+                ood_result = {'pq': pq_class, 'sq': sq_class, 'rq': rq_class, 'no_instances': (tp+fn), "correct_instances": tp, "false_instances": fp}
 
         return ood_result
 
@@ -365,7 +372,13 @@ def pq_compute(gt_json_file, pred_json_file, gt_folder=None, pred_folder=None, e
             'RQ-in': rq_in,
             'PQ-out': pq_out,
             'SQ-out': sq_out,
-            'RQ-out': rq_out
+            'RQ-out': rq_out,
+            'in_no_instances': results["All"]['no_instances'],
+            'in_correct_instances': results["All"]['correct_instances'],
+            'in_false_instances': results["All"]['false_instances'],
+            'out_no_instances': results_ood['no_instances'],
+            'out_correct_instances': results_ood['correct_instances'],
+            'out_false_instances': results_ood['false_instances']
         }
         results["uncertainity"] = upq_result
     t_delta = time.time() - start_time

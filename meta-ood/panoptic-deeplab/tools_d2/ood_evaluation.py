@@ -23,6 +23,10 @@ import matplotlib.pyplot as plt
 import ood_config
 from detectron2.modeling import build_model
 from detectron2.checkpoint import DetectionCheckpointer
+import _init_paths
+import d2
+import seaborn as sns
+sns.set()
 
 class AnomalyDetector():
     def __init__(self, model=None, dataset=None, transform=None, model_name=None):
@@ -36,7 +40,7 @@ class AnomalyDetector():
         output = self.network(image)
 
         # evaluation for DeepLab only. Panoptic deeplab sends the data already in right format
-        if not "anomaly_score" in output[0].keys():
+        if ood_config.evaluate_ood and not "anomaly_score" in output[0].keys():
             softmax_out = F.softmax(output[0]['sem_seg'])
             softmax_out = softmax_out.detach().cpu().numpy()
             sem_out = output[0]["sem_seg"].argmax(dim=0).cpu().numpy()
@@ -149,23 +153,35 @@ def evaluate(args):
 
     network = network.cuda()
     network.eval()
-
-
+    
+    network.save_instance_path = ood_config.save_instance_path
+    network.read_instance_path = ood_config.read_instance_path
+    network.read_semantic_path = ood_config.read_semantic_path 
+    print(network.save_instance_path)
+    network.performance_with_ood = ood_config.performance_with_ood
     # parameter to evaluate OOD using max softmax value
-    if ood_config.evaluate_ood:
+    if ood_config.evaluate_ood or ood_config.performance_with_ood:
         network.max_softmax = max_softmax
         network.evaluate_ood = ood_config.evaluate_ood
+        network.performance_with_ood = ood_config.performance_with_ood
 
     transform = None
-    thresholds = [0.95, 0.96, 0.97, 0.98, 0.99, 1]
+    thresholds = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    #thresholds = [0.9, 0.93, 0.95, 0.96, 0.97, 0.98, 0.99, 0.995, 1.0]
+    #thresholds = [0.0, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.2, 0.3]
+    thresholds = [0.0, 0.1, 0.2,0.3, 0.4, 0.5,0.6,0.8, 0.9, 1.0]
     #thresholds = [ood_config.ood_threshold]
     specificity = []
     sensitivity = []
     gmean = []
+    
+    pq_in = []
+    pq_out = []
+    pod_q = []
 
     transform = None
     for threshold in thresholds:
-        if ood_config.evaluate_ood:
+        if ood_config.evaluate_ood or ood_config.performance_with_ood:
             print("====================================================")
             print("              Threshold: ", threshold)
             print("====================================================")
@@ -175,7 +191,7 @@ def evaluate(args):
         #ds = data_load(root="/export/kiran/cityscapes/", split="val", transform=transform)/home/kumarasw/kiran/cityscapes_coco/cityscapes_val_coco_val
         ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split, transform=transform)
         detector = AnomalyDetector(network, ds, transform, model_name)
-        result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds,
+        result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds, num_workers=4,
                                collate_fn=panoptic_deep_lab_collate, batch_size=ood_config.batch_size,
                                evaluate_ood=ood_config.evaluate_ood, semantic_only=ood_config.semantic_only,
                                evaluate_anomoly = ood_config.evaluate_anomoly)
@@ -184,22 +200,47 @@ def evaluate(args):
         specificity.append(result['semantic_seg']['sem_seg']['uSpecificity'])
         sensitivity.append(result['semantic_seg']['sem_seg']['uSensitivity'])
         gmean.append(result['semantic_seg']['sem_seg']['uGmean'])
+        
+        pq_in.append(result['panotic_seg']['panoptic_seg']['PQ-in'])
+        pq_out.append(result['panotic_seg']['panoptic_seg']['PQ-out'])
+        pod_q.append(result['panotic_seg']['panoptic_seg']['POD-Q'])
 
     if ood_config.evaluate_ood:
         if len(thresholds) > 1:
+            default_x_ticks = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+            #default_x_ticks = [0.0, 0.05, 0.1, 0.15 ,0.2, 0.25, 0.3]            
             fig = plt.figure()
-            plt.plot(thresholds, specificity, label="uSpecificity")
-            plt.plot(thresholds, sensitivity, label="uSensitivity")
-            plt.plot(thresholds, gmean, label="uGmean")
+            plt.plot(thresholds, specificity,  label="uSpecificity")
+            plt.plot(thresholds, sensitivity,  label="uSensitivity")
+            plt.plot(thresholds, gmean, label="G-Mean")
             plt.xlabel("Threshold")
-            plt.ylabel("uGmean")
+            plt.ylabel("Performance scaled to 1")
+            plt.xticks(default_x_ticks, default_x_ticks, ha='center')
             plt.legend()
-            fig.savefig("./sensitivity_vs_specificity.png")
+            plt.show()
+            fig.savefig("./bdd_uaps_new_sensitivity_vs_specificity_val.png",dpi=200)
+
+            fig = plt.figure()
+            plt.plot(thresholds, pq_in, label="PQ-in")
+            plt.plot(thresholds, pq_out, label="PQ-out")
+            plt.plot(thresholds, pod_q, label="POD-Q")
+            plt.xlabel("Threshold")
+            plt.ylabel("Performance in %")
+
+            plt.xticks(default_x_ticks, default_x_ticks, ha='center')
+            plt.legend()
+
+            fig.savefig("./bdd_uaps_new_podq_threshold_val.png", dpi=200)
 
         print("Thresholds: ", thresholds)
         print("Gmean: ", gmean)
         print('Usensitivity: ', sensitivity)
         print("Uspecivicity: ", specificity)
+
+        print("============================================")
+        print("PQ-in", pq_in)
+        print("PQ-out", pq_out)
+        print("POD-Q", pod_q)
 
 
 

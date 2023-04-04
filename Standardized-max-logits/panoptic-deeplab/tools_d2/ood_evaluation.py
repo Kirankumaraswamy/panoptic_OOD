@@ -23,7 +23,8 @@ import numpy as np
 from cityscapesscripts.helpers.labels import trainId2label
 import matplotlib.pyplot as plt
 import ood_config
-
+import seaborn as sns
+sns.set()
 import _init_paths
 import d2
 
@@ -88,7 +89,7 @@ class AnomalyDetector():
         image = self.preprocess_image(image)
         output = self.network(image)
 
-        if not "anomaly_score" in output[0].keys():
+        if False and ood_config.evaluate_ood and not "anomaly_score" in output[0].keys():
             main_out = torch.unsqueeze(output[0]['sem_seg'], dim=0)
 
             if self.class_mean is None or self.class_var is None:
@@ -180,33 +181,47 @@ def evaluate(args):
     net = get_net()
 
     mean_std = ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-
-    if ood_config.evaluate_ood:
+    net.performance_with_ood = ood_config.performance_with_ood
+    if ood_config.evaluate_ood or ood_config.performance_with_ood:
         class_mean = np.load(f'./stats/{args.dataset}_{model_name}_mean.npy', allow_pickle=True)
         class_var = np.load(f'./stats/{args.dataset}_{model_name}_var.npy', allow_pickle=True)
+        
+        class_mean = np.load(ood_config.class_mean, allow_pickle=True)
+        class_var = np.load(ood_config.class_var, allow_pickle=True)
+        print(class_mean.item())
+        print(class_var.item())
+        
         net.class_mean = class_mean.item()
         net.class_var = class_var.item()
         net.evaluate_ood = ood_config.evaluate_ood
 
+        print(class_mean)
+
+    net.read_instance_path = ood_config.read_instance_path
 
     #transform = Compose([ToTensor(), Normalize(CityscapesOOD.mean, CityscapesOOD.std)])
     transform = None
-    thresholds = [0.02 * i for i in range(0, 4)]
+    thresholds = [0.0,  0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.5, 0.6, 0.7, 0.9, 1.0]
+
     thresholds = [ood_config.ood_threshold]
     specificity = []
     sensitivity = []
     gmean = []
 
+    pq_in = []
+    pq_out = []
+    pod_q = []
+
     ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split,
                    transform=transform)
 
     for threshold in thresholds:
-        if ood_config.evaluate_ood:
+        if ood_config.evaluate_ood or ood_config.performance_with_ood:
             print("====================================================")
             print("              Threshold: ", threshold)
             print("====================================================")
             net.ood_threshold = threshold
-        detector = AnomalyDetector(net, mean_std, class_mean=class_mean.item(), class_var=class_var.item(), model_name=model_name)
+        detector = AnomalyDetector(net, mean_std, model_name=model_name)
         result = data_evaluate(estimator=detector.estimator_worker, evaluation_dataset=ds, batch_size=ood_config.batch_size,
                                collate_fn=panoptic_deep_lab_collate, evaluate_ood=ood_config.evaluate_ood, semantic_only=ood_config.semantic_only,
                                evaluate_anomoly = ood_config.evaluate_anomoly)
@@ -215,22 +230,47 @@ def evaluate(args):
         specificity.append(result['semantic_seg']['sem_seg']['uSpecificity'])
         sensitivity.append(result['semantic_seg']['sem_seg']['uSensitivity'])
         gmean.append(result['semantic_seg']['sem_seg']['uGmean'])
+        
+        pq_in.append(result['panotic_seg']['panoptic_seg']['PQ-in'])
+        pq_out.append(result['panotic_seg']['panoptic_seg']['PQ-out'])
+        pod_q.append(result['panotic_seg']['panoptic_seg']['POD-Q'])
 
     if ood_config.evaluate_ood:
         if len(thresholds) > 1:
+            default_x_ticks = [0.0,  0.1,  0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+
             fig = plt.figure()
             plt.plot(thresholds, specificity,  label="uSpecificity")
             plt.plot(thresholds, sensitivity,  label="uSensitivity")
-            plt.plot(thresholds, gmean, label="uGmean")
+            plt.plot(thresholds, gmean, label="G-Mean")
             plt.xlabel("Threshold")
-            plt.ylabel("uGmean")
+            plt.ylabel("Performance scaled to 1")
+            plt.xticks(default_x_ticks, default_x_ticks, ha='center')
             plt.legend()
-            fig.savefig("./sensitivity_vs_specificity.png")
+            plt.show()
+            fig.savefig("./max_logit_sensitivity_vs_specificity_val.png",dpi=200)
+
+            fig = plt.figure()
+            plt.plot(thresholds, pq_in, label="PQ-in")
+            plt.plot(thresholds, pq_out, label="PQ-out")
+            plt.plot(thresholds, pod_q, label="POD-Q")
+            plt.xlabel("Threshold")
+            plt.ylabel("Performance in %")
+
+            plt.xticks(default_x_ticks, default_x_ticks, ha='center')
+            plt.legend()
+
+            fig.savefig("./max_logit_podq_threshold_val.png", dpi=200)
 
         print("Thresholds: ", thresholds)
         print("Gmean: ", gmean)
         print('Usensitivity: ', sensitivity)
         print("Uspecivicity: ", specificity)
+
+        print("============================================")
+        print("PQ-in", pq_in)
+        print("PQ-out", pq_out)
+        print("POD-Q", pod_q)
 
 
 if __name__ == '__main__':

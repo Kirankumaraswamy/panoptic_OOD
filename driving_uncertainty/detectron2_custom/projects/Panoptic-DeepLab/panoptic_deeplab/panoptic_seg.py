@@ -22,6 +22,7 @@ from detectron2.structures import BitMasks, ImageList, Instances
 from detectron2.utils.registry import Registry
 
 from .post_processing import get_panoptic_segmentation
+import os 
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -165,30 +166,40 @@ class PanopticDeepLab(nn.Module):
             c = sem_seg_postprocess(center_result, image_size, height, width)
             o = sem_seg_postprocess(offset_result, image_size, height, width)
 
-
+            sem_out = r.argmax(dim=0, keepdim=True)
             anomaly_score = None
 
             if hasattr(self, "evaluate_ood"):
                 evaluate_ood = self.evaluate_ood
             else:
                 evaluate_ood = False
-
+            
             if evaluate_ood:
-                sem_out = r.argmax(dim=0, keepdim=True).cpu()
 
                 softmax_out = F.softmax(r)
-                softmax_out_cpu = softmax_out.detach().cpu()
+                softmax_out = softmax_out.detach()
 
-                del softmax_out, input_per_image, sem_seg_result, features, center_result, offset_result
-                torch.cuda.empty_cache()
-
-                out = self.synboost.synboost_uncertainity(softmax_out_cpu)
+                out = self.synboost.synboost_uncertainity(softmax_out)
                 sem_out_ood = torch.unsqueeze(out["sem_seg"], dim=0)
-                anomaly_score = out["anomaly_score"].numpy()
+                anomaly_score = out["anomaly_score"]
 
-                sem_out_ood = sem_out_ood.cpu()
-                c = c.cpu()
-                o = o.cpu()
+                sem_out_ood = sem_out_ood.to(softmax_out.device)
+
+            if hasattr(self, "performance_with_ood") and self.performance_with_ood == True:
+                 
+                softmax_out = F.softmax(r)
+                softmax_out = softmax_out.detach()
+                out = self.synboost.synboost_uncertainity(softmax_out)
+                anomaly_score = out["anomaly_score"]
+                sem_out = torch.unsqueeze(out["sem_seg"], dim=0)
+                sem_out[torch.unsqueeze(anomaly_score > self.ood_threshold, dim=0)] = -1
+                sem_out = sem_out.to(r.device)
+
+            if hasattr(self, "read_instance_path") and self.read_instance_path is not None:
+                c = np.load(os.path.join(self.read_instance_path, batched_inputs[0]["image_id"]+"_center.npy"))
+                o = np.load(os.path.join(self.read_instance_path, batched_inputs[0]["image_id"]+"_offset.npy"))
+                c = torch.tensor(c).to(r.device)
+                o = torch.tensor(o).to(r.device)
 
             # Post-processing to get panoptic segmentation.
             panoptic_image, _ = get_panoptic_segmentation(
@@ -230,7 +241,7 @@ class PanopticDeepLab(nn.Module):
             # For panoptic segmentation evaluation.
             processed_results[-1]["panoptic_seg"] = (panoptic_image, None)
 
-            if hasattr(self, "evaluate_ood"):
+            if evaluate_ood:
                 processed_results[-1]["sem_seg"] = torch.squeeze(sem_out_ood)
                 processed_results[-1]["panoptic_seg"] = (panoptic_image_ood, None)
                 processed_results[-1]["anomaly_score"] = torch.tensor(anomaly_score)

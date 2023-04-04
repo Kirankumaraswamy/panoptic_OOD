@@ -17,19 +17,21 @@ from fvcore.transforms.transform import (
     TransformList,
 )
 from PIL import Image
+from torchvision.transforms import functional as tfn
 
 try:
     import cv2  # noqa
 except ImportError:
     # OpenCV is an optional dependency at the moment
     pass
-
+import cv2
 __all__ = [
     "ExtentTransform",
     "ResizeTransform",
     "RotationTransform",
     "ColorTransform",
     "PILColorTransform",
+    "MyOpTransform"
 ]
 
 
@@ -342,6 +344,43 @@ def Resize_rotated_box(transform, rotated_boxes):
     rotated_boxes[:, 4] = np.arctan2(scale_factor_x * s, scale_factor_y * c) * 180 / np.pi
 
     return rotated_boxes
+
+class MyOpTransform(Transform):
+    """
+    A transform that does nothing.
+    """
+
+    def __init__(self, op):
+        self.h = op[0]
+        self.w = op[1]
+        super().__init__()
+
+    def apply_image(self, img: np.ndarray) -> np.ndarray:
+        img = Image.fromarray(img)
+        
+        h, w = img.size[1], img.size[0]
+        if w < self.w:
+            img = tfn.pad(img, (self.w - w, 0), 0, 'constant')
+
+        if h < self.h:
+            img = tfn.pad(img, (0, self.h - h), 0, 'constant')
+
+        return np.array(img)
+
+    def apply_segmentation(self, img: np.ndarray) -> np.ndarray:
+        return self.apply_image(img)
+
+    def apply_coords(self, coords: np.ndarray) -> np.ndarray:
+        return coords
+
+    def inverse(self) -> Transform:
+        return self
+
+    def __getattr__(self, name: str):
+        if name.startswith("apply_"):
+            return lambda x: x
+        raise AttributeError("MyOpTransform object has no attribute {}".format(name))
+
 
 
 HFlipTransform.register_type("rotated_box", HFlip_rotated_box)

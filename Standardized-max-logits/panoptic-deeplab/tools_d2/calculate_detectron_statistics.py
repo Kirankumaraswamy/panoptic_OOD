@@ -327,12 +327,11 @@ def calculate_statistics( net, model_name):
 
 
     pred_list = None
+    target_lisy = None
     max_class_mean = {}
     print("Calculating statistics...")
     for i, data in enumerate(dataloader_train):
         inputs = data[0]
-        
-
         with torch.no_grad():
             output = net(inputs)
             
@@ -348,33 +347,37 @@ def calculate_statistics( net, model_name):
 
         if pred_list is None:
             pred_list = outputs.data.cpu()
+            target_list = data[0][0]["sem_seg"].unsqueeze(dim=0)
         else:
             pred_list = torch.cat((pred_list, outputs.cpu()), 0)
+            target_list = torch.cat((target_list, data[0][0]["sem_seg"].unsqueeze(dim=0)), 0)
         del outputs
         print("batch: ", i)
 
         if i % 200 == 199 or i == len(dataloader_train) - 1:
-            pred_list = pred_list.transpose(1, 3)
-            pred_list, prediction = pred_list.max(3)
+            break
+    pred_list = pred_list.permute(0, 2, 3, 1)
+    pred_list, prediction = pred_list.max(3)
+    
+    print(pred_list.size(), pred_list.max()) 
+    class_max_logits = []
+    mean_dict, var_dict = {}, {}
+    for c in range(datasets.num_classes):
+        #correct_pred = torch.logical_and(prediction == c, target_list == c)
+        correct_pred = (prediction == c)
+        max_mask = pred_list[correct_pred]
+        class_max_logits.append(max_mask)
+        
+        mean_dict[c] = max_mask.mean().item()
+        var_dict[c] = max_mask.var().item()
 
-            class_max_logits = []
-            mean_dict, var_dict = {}, {}
-            for c in range(datasets.num_classes):
-                max_mask = pred_list[prediction == c]
-                class_max_logits.append(max_mask)
 
-                mean = class_max_logits[c].mean(dim=0)
-                var = class_max_logits[c].var(dim=0)
+    print(f"class mean: {mean_dict}")
+    print(f"class var: {var_dict}")
+    np.save(f'./stats/{args.dataset[0]}_{model_name}_mean.npy', mean_dict)
+    np.save(f'./stats/{args.dataset[0]}_{model_name}_var.npy', var_dict)
 
-                mean_dict[c] = mean.item()
-                var_dict[c] = var.item()
-
-            print(f"class mean: {mean_dict}")
-            print(f"class var: {var_dict}")
-            np.save(f'./stats/{args.dataset[0]}_{model_name}_mean.npy', mean_dict)
-            np.save(f'./stats/{args.dataset[0]}_{model_name}_var.npy', var_dict)
-
-            return None
+    return None
 
 if __name__ == '__main__':
     main()

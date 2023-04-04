@@ -41,7 +41,7 @@ from scipy import ndimage as ndi
 from kornia.morphology import dilation, erosion
 import _init_paths
 import d2
-
+import ood_config
 
 dirname = os.path.dirname(__file__)
 pretrained_model_path = os.path.join(dirname, 'pretrained/r101_os8_base_cty.pth')
@@ -182,10 +182,10 @@ for k, v in d_ks.items():
     print(f'dilation kernel at {k}:\n\n{d_ks[k]}')
 
 # ckpt_path = "/home/kumarasw/Thesis/Standardized-max-logits/pretrained/deeplab_model_final_a8a355.pkl"
-ckpt_path = "/home/kumarasw/Thesis/meta-ood/weights/panoptic_deeplab_model_final_23d03a.pkl"
+ckpt_path = "/home/mohan/kiran/ponoptic_OOD/meta-ood/panoptic-deeplab/tools_d2/weights/panoptic_deeplab_X_65_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.pth"
 model_name = "Detectron_Panoptic_DeepLab"
 train = False
-Detectron_PanopticDeepLab_Config = "/home/kumarasw/Thesis/Standardized-max-logits/config/panopticDeeplab/panoptic_deeplab_R_52_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
+Detectron_PanopticDeepLab_Config = "./configs/Cityscapes-PanopticSegmentation/panoptic_deeplab_X_65_os16_mg124_poly_90k_bs32_crop_512_1024_dsconv.yaml"
 Detectron_DeepLab_Config = "/home/kumarasw/Thesis/Standardized-max-logits/config/deeplab/deeplab_v3_plus_R_103_os16_mg124_poly_90k_bs16.yaml"
 
 def get_net():
@@ -368,31 +368,20 @@ class AnomalyDetector:
         self.multi_scale = self.multi_scale.cuda()
     
     def estimator_worker(self, image):
-        image = np.array(Image.fromarray(np.array(image)).convert('RGB').resize((2048, 1024))).astype('uint8')
+        
+        x = np.array(Image.fromarray(np.array(image)).convert('RGB').resize((2048, 1024))).astype('uint8')
+        x = torch.as_tensor(np.ascontiguousarray(x.transpose(2, 0, 1)))
+        x = [{"image": x, "height": x.size()[1], "width": x.size()[2]}]
         with torch.no_grad():
-            image = self.preprocess_image(image, self.mean_std)
-            image = torch.squeeze(image)
-            input = [{"image": image, "height": image.size()[1], "width": image.size()[2]}]
-            main_out = self.model(input)
+            main_out = self.model(x)
+            print(main_out[0].keys())
+            anomoaly_score = main_out[0]['anomaly_score']
 
-            main_out = torch.unsqueeze(main_out[0]['sem_seg'], dim=0)
+        '''import matplotlib.pyplot as plt
+        plt.imshow(anomoaly_score.detach().cpu().numpy().squeeze())
+        plt.show()'''
 
-
-            if self.class_mean is None or self.class_var is None:
-                raise Exception("Class mean and var are not set!")
-            anomaly_score, prediction = main_out.detach().max(1)
-            for c in range(self.num_classes):
-                anomaly_score = torch.where(prediction == c,
-                                            (anomaly_score - self.class_mean[c]) / np.sqrt(self.class_var[c]),
-                                            anomaly_score)
-            
-            '''with torch.no_grad():
-                anomaly_score = self.multi_scale(anomaly_score, prediction)'''
-
-        del main_out
-        anomaly_score = anomaly_score * -1
-
-        return anomaly_score.cpu()
+        return anomoaly_score.detach().cpu()
 
     def preprocess_image(self, x, mean_std):
         x = Image.fromarray(x)
@@ -415,9 +404,13 @@ if __name__ == '__main__':
     mean_std = ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     net = get_net()
 
+    net.evaluate_ood = True
+    net.ood_threshold = ood_config.ood_threshold
+
     class_mean = np.load(f'./stats/{args.dataset}_{model_name}_mean.npy', allow_pickle=True)
-    class_var = np.load(f'./stats/{args.dataset}_{model_name}.npy', allow_pickle=True)
+    class_var = np.load(f'./stats/{args.dataset}_{model_name}_var.npy', allow_pickle=True)
     
+
     fs = bdlb.load(benchmark="fishyscapes", download_and_prepare=False)
     fs.download_and_prepare('LostAndFound')
     #fs.download_and_prepare('Static')
@@ -426,6 +419,9 @@ if __name__ == '__main__':
     ds = tfds.load('fishyscapes/LostAndFound', split='validation')
 
     detector = AnomalyDetector(net, mean_std, class_mean=class_mean.item(), class_var=class_var.item())
+    net.class_mean = class_mean.item()
+    net.class_var = class_var.item()
+    
     metrics = fs.evaluate(detector.estimator_worker, ds)
 
     print('My method achieved {:.2f}% AP'.format(100 * metrics['AP']))

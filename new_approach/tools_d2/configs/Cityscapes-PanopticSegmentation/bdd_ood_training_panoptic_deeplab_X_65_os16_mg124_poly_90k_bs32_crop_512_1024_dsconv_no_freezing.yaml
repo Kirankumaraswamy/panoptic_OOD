@@ -1,6 +1,7 @@
 _BASE_: Base-PanopticDeepLab-OS16.yaml
 MODEL:
-  WEIGHTS: "x65.pkl"
+  #WEIGHTS: "x65.pkl"
+  WEIGHTS: "./experiment_results/bdd_xception_sigmoid_bce_512_1024_bs16/model_0124999.pth"
   PIXEL_MEAN: [128, 128, 128]
   PIXEL_STD: [128, 128, 128]
   BACKBONE:
@@ -14,12 +15,14 @@ MODEL:
   SEM_SEG_HEAD:
     USE_DEPTHWISE_SEPARABLE_CONV: True
 SOLVER:
-  MAX_ITER: 90000
+  MAX_ITER: 17500
+  CHECKPOINT_PERIOD: 875
+  BASE_LR: 0.0001
+  IMS_PER_BATCH: 8
 INPUT:
   FORMAT: "RGB"
-  MIN_SIZE_TEST: 720
-  MAX_SIZE_TRAIN: 2560
-  MAX_SIZE_TEST: 1280
   CROP:
     #SIZE: (512, 1024)
     SIZE: None
+
+OUTPUT_DIR: "./experiment_results/bdd_final_experiments/bdd_xception_sigmoid_with_bdd_ood_no_head"
