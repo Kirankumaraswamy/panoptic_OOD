@@ -1,0 +1,35 @@
+_BASE_: Base-PanopticDeepLab-OS16.yaml
+MODEL:
+  #WEIGHTS: "x65.pkl"
+  WEIGHTS: "./experiment_results/bdd_xception_sigmoid_bce_512_1024_bs16/model_0124999.pth"
+  PIXEL_MEAN: [128, 128, 128]
+  PIXEL_STD: [128, 128, 128]
+  BACKBONE:
+    NAME: "d2_xception_65"
+  RESNETS:
+    NORM: "SyncBN"
+    RES4_DILATION: 1
+    RES5_DILATION: 2
+  PANOPTIC_DEEPLAB:
+    USE_DEPTHWISE_SEPARABLE_CONV: True
+  SEM_SEG_HEAD:
+    USE_DEPTHWISE_SEPARABLE_CONV: True
+    NAME: "PanopticDeepLabSigmoidSemSegHead"
+SOLVER:
+  MAX_ITER: 43750
+  CHECKPOINT_PERIOD: 4375
+  BASE_LR: 0.00025
+  IMS_PER_BATCH: 8
+INPUT:
+  FORMAT: "RGB"
+  CROP:
+    ENABLED: True
+    TYPE: "absolute"
+    SIZE: (512, 1024) 
+    #SIZE: None
+
+#OUTPUT_DIR: "./experiment_results/bdd_final_experiments/bdd_xception_sigmoid_with_bdd_ood_no_head_lr_00001_sem_0_1_0_9"
+#OUTPUT_DIR: "./experiment_results/bdd_final_experiments/bdd_xception_sigmoid_with_ood_head_0_1_0_3_lr_00001_0_1_0_9_sem/model_0008749.pth"
+#OUTPUT_DIR: "./experiment_results/bdd_final_experiments/bdd_sigmoid_69999_with_ood_head_0_1_0_3_sem_0_1_0_9_lr_0001"
+OUTPUT_DIR: "./experiment_results/bdd_final_experiments/bdd_xception_sigmoid_with_ood_head_01_03_lr_00025_sem_0_1_0_9"
+

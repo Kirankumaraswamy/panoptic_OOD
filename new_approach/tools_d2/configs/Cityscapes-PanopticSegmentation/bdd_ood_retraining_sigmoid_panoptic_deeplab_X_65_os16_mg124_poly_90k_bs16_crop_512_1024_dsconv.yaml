@@ -14,19 +14,15 @@ MODEL:
   SEM_SEG_HEAD:
     USE_DEPTHWISE_SEPARABLE_CONV: True
 SOLVER:
-  MAX_ITER: 90000
+  MAX_ITER: 135000
   CHECKPOINT_PERIOD: 5000
   BASE_LR: 0.0005
 INPUT:
   MIN_SIZE_TRAIN_SAMPLING: "choice"
-  #MIN_SIZE_TEST: 720
-  #MAX_SIZE_TRAIN: 2560
-  #MAX_SIZE_TEST: 1280
   FORMAT: "RGB"
   CROP:
     ENABLED: True
     TYPE: "absolute"
-    SIZE: (1024, 2048)
-    #SIZE: None
+    SIZE: (512, 1024)
 
-OUTPUT_DIR: "./experiment_results/xception_sigmoid_bce_512_1024_bs16"
+OUTPUT_DIR: "./experiment_results/bdd_ood_retraining_xception_sigmoid_bce_512_1024_bs16"

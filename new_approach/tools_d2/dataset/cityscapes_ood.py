@@ -160,7 +160,7 @@ class CityscapesOOD(Dataset):
             ignore_stuff_in_offset=cfg.INPUT.IGNORE_STUFF_IN_OFFSET,
             small_instance_area=cfg.INPUT.SMALL_INSTANCE_AREA,
             small_instance_weight=cfg.INPUT.SMALL_INSTANCE_WEIGHT,
-            ignore_crowd_in_semantic=cfg.INPUT.IGNORE_CROWD_IN_SEMANTIC,
+            ignore_crowd_in_semantic=cfg.INPUT.IGNORE_CROWD_IN_SEMANTIC
         )
 
     def __getitem__(self, i):

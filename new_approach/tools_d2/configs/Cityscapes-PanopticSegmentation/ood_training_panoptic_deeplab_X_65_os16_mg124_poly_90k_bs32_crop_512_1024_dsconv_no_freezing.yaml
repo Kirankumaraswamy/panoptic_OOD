@@ -1,6 +1,7 @@
 _BASE_: Base-PanopticDeepLab-OS16.yaml
 MODEL:
-  WEIGHTS: "x65.pkl"
+  #WEIGHTS: "x65.pkl"
+  WEIGHTS: "./experiment_results/xception_sigmoid_bce_512_1024_bs16/model_0069999.pth"
   PIXEL_MEAN: [128, 128, 128]
   PIXEL_STD: [128, 128, 128]
   BACKBONE:
@@ -14,19 +15,13 @@ MODEL:
   SEM_SEG_HEAD:
     USE_DEPTHWISE_SEPARABLE_CONV: True
 SOLVER:
-  MAX_ITER: 90000
-  CHECKPOINT_PERIOD: 5000
-  BASE_LR: 0.0005
+  MAX_ITER: 3720
+  CHECKPOINT_PERIOD: 372
+  BASE_LR: 0.0001
+  IMS_PER_BATCH: 8
 INPUT:
-  MIN_SIZE_TRAIN_SAMPLING: "choice"
-  #MIN_SIZE_TEST: 720
-  #MAX_SIZE_TRAIN: 2560
-  #MAX_SIZE_TEST: 1280
   FORMAT: "RGB"
   CROP:
-    ENABLED: True
-    TYPE: "absolute"
-    SIZE: (1024, 2048)
-    #SIZE: None
+    SIZE: (1024,2048)
 
-OUTPUT_DIR: "./experiment_results/xception_sigmoid_bce_512_1024_bs16"
+OUTPUT_DIR: "./experiment_results/xception_sigmoid_bce_512_1024_bs16_69999_with_cityscapes_ood_no_freezing"

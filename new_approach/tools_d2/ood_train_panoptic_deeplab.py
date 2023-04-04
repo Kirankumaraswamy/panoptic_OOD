@@ -33,9 +33,8 @@ from detectron2.projects.panoptic_deeplab import (
 )
 from detectron2.solver import get_default_optimizer_params
 from detectron2.solver.build import maybe_add_gradient_clipping
-import os
+import copy
 import d2
-#import config as config
 
 def build_sem_seg_train_aug(cfg):
     augs = [
@@ -61,6 +60,7 @@ def build_sem_seg_train_aug(cfg):
     augs.append(T.RandomFlip())
     return augs
 '''
+
 
 class Trainer(DefaultTrainer):
     """
@@ -171,24 +171,53 @@ def setup(args):
 def main(args):
     cfg = setup(args)
 
-    if args.eval_only:
+    if  args.eval_only:
         model = Trainer.build_model(cfg)
+
+        model.evaluate_ood = True
+        model.sem_seg_head.evaluate_ood = True
+        model.ins_embed_head.evaluate_ood = True
+        model.ood_threshold = 0.5
+
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume
         )
+
+        model.sem_seg_head.ood_head = copy.deepcopy(model.sem_seg_head.head)
+        model.sem_seg_head.ood_predictor = copy.deepcopy(model.sem_seg_head.predictor)
+
+        model.ins_embed_head.ood_center_head = copy.deepcopy(model.ins_embed_head.center_head)
+        model.ins_embed_head.ood_center_predictor = copy.deepcopy(model.ins_embed_head.center_predictor)
+
+        model.ins_embed_head.ood_offset_head = copy.deepcopy(model.ins_embed_head.offset_head)
+        model.ins_embed_head.ood_offset_predictor = copy.deepcopy(model.ins_embed_head.offset_predictor)
+
         res = Trainer.test(cfg, model)
         return res
 
     trainer = Trainer(cfg)
     trainer.resume_or_load(resume=args.resume)
+    #trainer.model.module.sem_seg_head.ood_head = copy.deepcopy(trainer.model.module.sem_seg_head.head)
+    #trainer.model.module.sem_seg_head.ood_predictor = copy.deepcopy(trainer.model.module.sem_seg_head.predictor)
+
+    '''trainer.model.module.ins_embed_head.ood_center_head = copy.deepcopy(trainer.model.module.ins_embed_head.center_head)
+    trainer.model.module.ins_embed_head.ood_center_predictor = copy.deepcopy(trainer.model.module.ins_embed_head.center_predictor)
+    
+    trainer.model.module.ins_embed_head.ood_offset_head = copy.deepcopy(trainer.model.module.ins_embed_head.offset_head)
+    trainer.model.module.ins_embed_head.ood_offset_predictor = copy.deepcopy(trainer.model.module.ins_embed_head.offset_predictor)
+    '''
+    trainer.model.module.evaluate_ood = True
+    trainer.model.module.sem_seg_head.evaluate_ood = True
+    trainer.model.module.ins_embed_head.evaluate_ood = True
     return trainer.train()
 
 
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
+    
+    os.environ["CUDA_VISIBLE_DEVICES"] ="3,4"
     args.dist_url = 'tcp://127.0.0.1:64486'
     print("Command Line Args:", args)
-    #os.environ["CUDA_VISIBLE_DEVICES"] ="2,3,4,5"
     launch(
         main,
         args.num_gpus,
@@ -197,3 +226,4 @@ if __name__ == "__main__":
         dist_url=args.dist_url,
         args=(args,),
     )
+

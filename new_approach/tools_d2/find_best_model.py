@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-#
-# Modified by Bowen Cheng
-#
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 """
@@ -9,12 +6,10 @@ Panoptic-DeepLab Training Script.
 This script is a simplified version of the training script in detectron2/tools.
 """
 
-import _init_paths
 import os
 import torch
 
 import detectron2.data.transforms as T
-import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import MetadataCatalog, build_detection_train_loader
@@ -33,10 +28,25 @@ from detectron2.projects.panoptic_deeplab import (
 )
 from detectron2.solver import get_default_optimizer_params
 from detectron2.solver.build import maybe_add_gradient_clipping
-import os
-import d2
-#import config as config
+from detectron2.utils.logger import setup_logger
+from detectron2.utils import comm
 
+#import config as config    
+import _init_paths
+import d2
+import glob
+
+def _print_panoptic_results(pq_res, f):
+    headers = ["", "PQ", "SQ", "RQ", "#categories"]
+    data = []
+    for name in ["All", "Things", "Stuff"]:
+        row = [name] + [pq_res[name][k] * 100 for k in ["pq", "sq", "rq"]] + [pq_res[name]["n"]]
+        data.append(row)
+    table = tabulate(
+        data, headers=headers, tablefmt="pipe", floatfmt=".3f", stralign="center", numalign="center"
+    )
+    f.write("Panoptic Evaluation Results:\n" + table)
+    
 def build_sem_seg_train_aug(cfg):
     augs = [
         T.ResizeShortestEdge(
@@ -47,20 +57,10 @@ def build_sem_seg_train_aug(cfg):
         if min(cfg.INPUT.CROP.SIZE) > min(cfg.INPUT.MIN_SIZE_TRAIN):
             augs.append(T.MyOpTransform(cfg.INPUT.CROP.SIZE))
         augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
+
     augs.append(T.RandomFlip())
     return augs
-'''
-def build_sem_seg_train_aug(cfg):
-    augs = [
-        T.ResizeShortestEdge(
-            cfg.INPUT.MIN_SIZE_TRAIN, cfg.INPUT.MAX_SIZE_TRAIN, cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING
-        )
-    ]
-    if cfg.INPUT.CROP.ENABLED:
-        augs.append(T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
-    augs.append(T.RandomFlip())
-    return augs
-'''
+
 
 class Trainer(DefaultTrainer):
     """
@@ -86,12 +86,9 @@ class Trainer(DefaultTrainer):
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
         if evaluator_type in ["cityscapes_panoptic_seg", "coco_panoptic_seg"]:
             evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
-        if evaluator_type == "cityscapes_panoptic_seg":
-            assert (
-                torch.cuda.device_count() >= comm.get_rank()
-            ), "CityscapesEvaluator currently do not work with multiple machines."
-            evaluator_list.append(CityscapesSemSegEvaluator(dataset_name))
-            evaluator_list.append(CityscapesInstanceEvaluator(dataset_name))
+        #if evaluator_type == "cityscapes_panoptic_seg":
+        #    evaluator_list.append(CityscapesSemSegEvaluator(dataset_name))
+        #    evaluator_list.append(CityscapesInstanceEvaluator(dataset_name))
         if evaluator_type == "coco_panoptic_seg":
             # `thing_classes` in COCO panoptic metadata includes both thing and
             # stuff classes for visualization. COCOEvaluator requires metadata
@@ -134,11 +131,8 @@ class Trainer(DefaultTrainer):
         """
         params = get_default_optimizer_params(
             model,
-            base_lr=cfg.SOLVER.BASE_LR,
             weight_decay=cfg.SOLVER.WEIGHT_DECAY,
             weight_decay_norm=cfg.SOLVER.WEIGHT_DECAY_NORM,
-            bias_lr_factor=cfg.SOLVER.BIAS_LR_FACTOR,
-            weight_decay_bias=cfg.SOLVER.WEIGHT_DECAY_BIAS,
         )
 
         optimizer_type = cfg.SOLVER.OPTIMIZER
@@ -167,28 +161,60 @@ def setup(args):
     default_setup(cfg, args)
     return cfg
 
+def logging(res, checkpoint, f, print_flag=False):
+    if print_flag:
+        log_text = "----------------------------------------\n Best Checkpoint Results "
+        log_text += "Evaluating {}:".format(checkpoint)
+    else:
+        log_text = "Evaluating {}:".format(checkpoint)
+    for key in res.keys():
+        log_text += "{} : {} ".format(key, res[key])
+    log_text += "\n"
+    f.write(log_text)
+    if print_flag:
+        print (log_text)
+    
 
 def main(args):
     cfg = setup(args)
+    model = Trainer.build_model(cfg)
 
-    if args.eval_only:
-        model = Trainer.build_model(cfg)
+    PQ_best = 0
+    best_checkpoint = None
+    best_res = None
+
+    #logger = setup_logger(os.path.join(cfg.OUTPUT_DIR, 'log_find_best.txt'))
+    if comm.is_main_process():
+        f = open(os.path.join(cfg.OUTPUT_DIR, 'log_find_best.txt'), 'w')
+    for checkpoint in sorted(glob.glob(os.path.join(cfg.OUTPUT_DIR, 'model_*.pth'))):
+        if '.pth' not in checkpoint:
+            continue
+        checkpoint_name = checkpoint.split('/')[-1]
+        if comm.is_main_process():
+            print ('---------- Evaluating: ' + checkpoint_name)
+        
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
-            cfg.MODEL.WEIGHTS, resume=args.resume
+            checkpoint, resume=args.resume
         )
         res = Trainer.test(cfg, model)
-        return res
+        if comm.is_main_process() and 'panoptic_seg' in res.keys():
+            PQ = res['panoptic_seg']['PQ']
+            logging(res['panoptic_seg'], checkpoint_name, f)
 
-    trainer = Trainer(cfg)
-    trainer.resume_or_load(resume=args.resume)
-    return trainer.train()
+            if PQ > PQ_best:
+                PQ_best = PQ
+                best_checkpoint = checkpoint_name
+                best_res = res['panoptic_seg']
+
+    if comm.is_main_process():
+        logging(best_res, best_checkpoint, f, True)
 
 
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
-    args.dist_url = 'tcp://127.0.0.1:64486'
+    args.dist_url = 'tcp://127.0.0.1:64487'
     print("Command Line Args:", args)
-    #os.environ["CUDA_VISIBLE_DEVICES"] ="2,3,4,5"
+    #os.environ["CUDA_VISIBLE_DEVICES"] ="0,1"
     launch(
         main,
         args.num_gpus,
