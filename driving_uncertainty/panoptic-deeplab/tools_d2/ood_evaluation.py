@@ -19,9 +19,10 @@ from detectron2.projects.panoptic_deeplab import (
 )
 from detectron2.engine import DefaultTrainer
 import tensorflow as tf
-
+import seaborn as sns
 import sys
-
+import _init_paths
+import d2
 sys.path.insert(0, os.path.join(os.getcwd(), os.path.dirname(__file__), 'image_segmentation'))
 import network
 from optimizer import restore_snapshot
@@ -41,8 +42,6 @@ from torchvision.transforms import Compose, ToTensor, Normalize
 from cityscapesscripts.helpers.labels import trainId2label
 import matplotlib.pyplot as plt
 import ood_config
-import _init_paths
-import d2
 
 
 class AnomalyDetector():
@@ -289,14 +288,16 @@ class AnomalyDetector():
         img = Image.fromarray(np.array(image.permute((1,2,0))))
         #img_tensor = self.img_transform(img)
         #data = [{"image": img_tensor, "height": img_tensor.size()[1], "width": img_tensor.size()[2]}]
-
         self.img = img
         self.seg_net.evaluate_ood = ood_config.evaluate_ood
         self.seg_net.synboost = self
-
+        self.seg_net.ood_threshold=threshold
+        self.seg_net.read_instance_path = ood_config.read_instance_path
+        self.seg_net.performance_with_ood = ood_config.performance_with_ood
         output = self.seg_net(input)
         output[0]["sem_seg"] = output[0]["sem_seg"].cpu()
-        output[0]["anomaly_score"] = output[0]["anomaly_score"].cpu()
+        if ood_config.evaluate_ood:
+            output[0]["anomaly_score"] = output[0]["anomaly_score"].cpu()
 
         '''plt.imshow(torch.squeeze(output[0]["anomaly_score"].detach().cpu()).numpy())
         plt.show()'''
@@ -595,43 +596,71 @@ def panoptic_deep_lab_collate(batch):
 if __name__ == '__main__':
     transform = None
 
-    #thresholds = [0.02 * i for i in range(0, 4)]
+    #thresholds = [0.0, 0.005, 0.01, 0.02, 0.03, 0.05, 0.07, 0.1]
+    thresholds = [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0]
     thresholds = [ood_config.ood_threshold]
     specificity = []
     sensitivity = []
     gmean = []
-
+    detector = AnomalyDetector(True, ood_threshold=None)
     ds = data_load(root=ood_config.ood_dataset_path, split=ood_config.ood_split,
                    transform=transform)
-
+    pq_in = []
+    pq_out = []
+    pod_q = []
     for threshold in thresholds:
         if ood_config.evaluate_ood:
             print("====================================================")
             print("              Threshold: ", threshold)
             print("====================================================")
-
-        detector = AnomalyDetector(True, ood_threshold=threshold)
-        result = data_evaluate(estimator=detector.detectron_estimator_worker, evaluation_dataset=ds, batch_size=ood_config.batch_size,
+        
+        detector.ood_threshold=threshold
+        # This evaluation works only with batch size 1
+        result = data_evaluate(estimator=detector.detectron_estimator_worker, evaluation_dataset=ds, batch_size=1,
                                collate_fn=panoptic_deep_lab_collate, evaluate_ood=ood_config.evaluate_ood, semantic_only=ood_config.semantic_only, evaluate_anomoly = ood_config.evaluate_anomoly)
         print("====================================================")
         print(result)
         specificity.append(result['semantic_seg']['sem_seg']['uSpecificity'])
         sensitivity.append(result['semantic_seg']['sem_seg']['uSensitivity'])
         gmean.append(result['semantic_seg']['sem_seg']['uGmean'])
+        
+        pq_in.append(result['panotic_seg']['panoptic_seg']['PQ-in'])
+        pq_out.append(result['panotic_seg']['panoptic_seg']['PQ-out'])
+        pod_q.append(result['panotic_seg']['panoptic_seg']['POD-Q'])
 
     if ood_config.evaluate_ood:
         if len(thresholds) > 1:
+            default_x_ticks = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+
             fig = plt.figure()
-            plt.plot(thresholds, specificity, label="uSpecificity")
-            plt.plot(thresholds, sensitivity, label="uSensitivity")
-            plt.plot(thresholds, gmean, label="uGmean")
+            plt.plot(thresholds, specificity,  label="uSpecificity")
+            plt.plot(thresholds, sensitivity,  label="uSensitivity")
+            plt.plot(thresholds, gmean, label="G-Mean")
             plt.xlabel("Threshold")
-            plt.ylabel("uGmean")
+            plt.ylabel("Performance scaled to 1")
+            plt.xticks(default_x_ticks, default_x_ticks, ha='center')
             plt.legend()
-            fig.savefig("./sensitivity_vs_specificity.png")
+            plt.show()
+            fig.savefig("./synbbost_sensitivity_vs_specificity_val.png",dpi=200)
+
+            fig = plt.figure()
+            plt.plot(thresholds, pq_in, label="PQ-in")
+            plt.plot(thresholds, pq_out, label="PQ-out")
+            plt.plot(thresholds, pod_q, label="POD-Q")
+            plt.xlabel("Threshold")
+            plt.ylabel("Performance in %")
+
+            plt.xticks(default_x_ticks, default_x_ticks, ha='center')
+            plt.legend()
+
+            fig.savefig("./synboost_podq_threshold_val.png", dpi=200)
 
         print("Thresholds: ", thresholds)
         print("Gmean: ", gmean)
         print('Usensitivity: ', sensitivity)
         print("Uspecivicity: ", specificity)
 
+        print("============================================")
+        print("PQ-in", pq_in)
+        print("PQ-out", pq_out)
+        print("POD-Q", pod_q)
