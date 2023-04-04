@@ -127,7 +127,7 @@ def convert2TrainIds(bddPath=None, setNames=["val", "train", "test"]):
 
     for setName in setNames:
         # how to search for all ground truth
-        searchFine   = os.path.join(bddPath, "gtFine", setName, "city", "*_gtFine_labelIds.png")
+        searchFine   = os.path.join(bddPath, "gtFine", setName, "*" , "*_gtFine_labelIds.png")
         # search files
         filesFine = glob.glob(searchFine)
         filesFine.sort()
@@ -143,8 +143,8 @@ def convert2TrainIds(bddPath=None, setNames=["val", "train", "test"]):
         images = []
         annotations = []
         for progress, f in enumerate(files):
-            city_name = "city"
             fileName = os.path.basename(f)
+            city_name = fileName.split("_")[0]
             outputFileName = fileName.replace("_labelIds.png", "_labelTrainIds.png")
             originalFormat = np.array(Image.open(f))
 
@@ -154,7 +154,10 @@ def convert2TrainIds(bddPath=None, setNames=["val", "train", "test"]):
 
             semanticIds = np.unique(originalFormat)
             for semanticId in semanticIds:
-                train_format[originalFormat==semanticId] = labels[semanticId].trainId
+                if semanticId == 50:
+                    train_format[originalFormat==semanticId] = 19
+                else:
+                    train_format[originalFormat==semanticId] = labels[semanticId].trainId
 
             Image.fromarray(train_format).save(os.path.join(bddPath, "gtFine", setName, city_name, outputFileName))
 
@@ -168,13 +171,13 @@ def main():
     parser.add_argument("--bdd-path",
                         dest="bddPath",
                         help="path to the BDD dataset images which are converted to cityscapes format",
-                        default="/home/kumarasw/OOD_dataset/bdd/bdd",
+                        default="/home/mohan/kiran/bdd_ood_val/filtered_bdd_filtered/cityscapes/",
                         type=str)
     parser.add_argument("--set-names",
                         dest="setNames",
                         help="set names to which apply the function to",
                         nargs='+',
-                        default=["val", "train"],
+                        default=["val"],
                         type=str)
     args = parser.parse_args()
 
