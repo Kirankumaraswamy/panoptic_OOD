@@ -18,4 +18,5 @@ SOLVER:
 INPUT:
   FORMAT: "RGB"
   CROP:
-    SIZE: (512, 1024)
+    #SIZE: (1024, 2048)
+    SIZE: None
