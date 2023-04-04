@@ -27,7 +27,7 @@ bins = np.linspace(0, 100, 12)
 border_smooth_bin = np.linspace(0, 200000, 5)
 random_no_instances = 3
 # total number of samples to generate for each cityscapes image
-sample_instances = 1
+sample_instances = 4
 
 web_categories = {
     "dog": ("road", "car", 0.2, "test"),
@@ -483,14 +483,17 @@ def create_bdd_web_panoptic(args):
     instance_count = 0
 
     completed_ids = []
-    '''
-    # failure code   
+
+    ''''# failure code
     #this is the first ID name written in that last line of status file
     starting_web_id = "buldozer_154.jpg"
+    starting_cityscapes_image = "city_821e597a-b29f6f56_0"
     starting_web_id_index = []
     if os.path.exists(outFile):
         d = json.load(open(outFile))
         for image in d["images"]:
+            if starting_cityscapes_image in image["bdd_id"]:
+                break
             completed_ids.append(image["bdd_id"])
         annotations = d["annotations"]
         images = d["images"]
@@ -498,8 +501,8 @@ def create_bdd_web_panoptic(args):
             if web_id == starting_web_id:
                 instance_count = index
 
-        print("running recover from web_id ",  instance_count)
-    '''
+        print("running recover from web_id ",  instance_count)'''
+
     for progress, f in enumerate(bdd_files):
         fileName = os.path.basename(f)
 
@@ -690,7 +693,7 @@ def create_bdd_web_panoptic(args):
                 #depth_at_start_pixel = bdd_depth_img[start_height][start_width]
                 # consider averge of sorrounding pixels for more efficient
                 average_depth = np.mean(
-                    bdd_depth_img[road_pixels[0][road_random_pixel]:road_pixels[0][road_random_pixel] + 10, start_width: start_width + 10])
+                    bdd_depth_img[road_pixels[0][road_random_pixel]:road_pixels[0][road_random_pixel] + 50, start_width: start_width + 50])
                 depth_at_start_pixel = average_depth
                 bin = np.digitize(np.array(depth_at_start_pixel), bins)
 
@@ -916,22 +919,22 @@ def main():
     parser.add_argument("--bdd-split",
                         dest="bddSplit",
                         help="bdd data split to be used to create the OOD dataset",
-                        default="train",
+                        default="val",
                         type=str)
     parser.add_argument("--web-instance-path",
                         dest="webInstancePath",
                         help="path to the COCO dataset folder",
-                        default="/home/kumarasw/OOD_dataset/web_ood_rohit/filtered_ood_instances",
+                        default="/home/kumarasw/OOD_dataset/filtered_web_val_ood_instances",
                         type=str)
     parser.add_argument("--ood-split",
                         dest="oodSplit",
                         help="web data split to be used to create the OOD dataset",
-                        default="train",
+                        default="test",
                         type=str)
     parser.add_argument("--output-folder",
                         dest="outputFolder",
                         help="path to the output folder.",
-                        default="/home/kumarasw/OOD_dataset/web_ood_rohit",
+                        default="/home/kumarasw/OOD_dataset/temp_dir",
                         type=str)
     parser.add_argument("--use-train-id", action="store_true", dest="useTrainId")
 

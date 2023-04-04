@@ -29,7 +29,7 @@ bins = np.linspace(0, 40000, 12)
 border_smooth_bin = np.linspace(0, 200000, 5)
 random_no_instances = 3
 # total number of samples to generate for each cityscapes image
-sample_instances = 9
+sample_instances = 1
 
 
 
@@ -273,16 +273,23 @@ def create_cityscapes_coco_panoptic(args):
 
     coco_img_Ids = []
 
+    exclude_class = ["bird", "bottle", "dog", "horse", "elephant", "giraffe", "chair", "umbrella", "skating board"]
     coco_json_file = os.path.join(coco_instances_dir, "coco_instances.json")
     coco_json_data = json.load(open(coco_json_file))
     for count, (coco_id, value) in enumerate(coco_json_data.items()):
         if (os.path.exists(os.path.join(cocoInstancePath, coco_json_data[coco_id]["rgb_image"])) and
             os.path.exists(os.path.join(cocoInstancePath, coco_json_data[coco_id]["panoptic_image"])) and
             os.path.exists(os.path.join(cocoInstancePath, coco_json_data[coco_id]["semantic_image"]))):
-            coco_img_Ids.append(coco_id)
+            if value['semantic_names'][0] not in exclude_class:
+                coco_img_Ids.append(coco_id)
+            else:
+                print("excluding ", value['semantic_names'], coco_id)
         else:
             print("missing ", coco_id)
-    coco_img_Ids.sort()
+    if cityscapesSplit == "val":
+        coco_img_Ids.sort(reverse=True)
+    else:
+        coco_img_Ids.sort()
 
 
     categories = []
@@ -305,6 +312,21 @@ def create_cityscapes_coco_panoptic(args):
         filesFine.sort()
 
     cityscapes_files = filesFine
+
+    ''''#==========================================
+    # below code is needed for ood instances from web
+    # randomly add duplicate instances if web instances are less in number
+    duplicate_list = []
+    random.seed(0)
+    random.shuffle(coco_img_Ids)
+    for c in range(int(3.5 * len(filesFine)) - len(coco_img_Ids)):
+        rand_index = random.randint(0, len(coco_img_Ids) - 1)
+        duplicate_list.append(coco_img_Ids[rand_index])
+
+    coco_img_Ids += duplicate_list
+
+
+    #============================================'''
 
     # quit if we did not find anything
     if not cityscapes_files:
@@ -442,7 +464,7 @@ def create_cityscapes_coco_panoptic(args):
                                                  cityscapes_disparity_name)
         cityscapes_disparity_img = np.array(Image.open(cityscapes_disparity_path))
 
-        
+
         outputFileName = fileName.replace("_instanceIds.png", "_panoptic.png")
         # image entry, id for image is its filename without extension
         images.append({"cityscapes_id": cityscapes_imageId,
@@ -530,9 +552,16 @@ def create_cityscapes_coco_panoptic(args):
             sky_pixels = np.where(originalFormat >= 0)
             sky_pixel_mask[sky_pixels] = 1
 
-
-            # thic counts individual instances in each image
+            # this counts individual instances in each image
             random_instance_count = 0
+
+            # start from next number if an object already exists
+            for item in segmInfo:
+                if item['category_id'] == ood_id:
+                    ins_count = item['id'] % 50000
+                    if ins_count >= random_instance_count:
+                        random_instance_count = ins_count + 1
+
 
             #counts individual coco instance images
             coco_image_instance_count = 0
@@ -549,7 +578,7 @@ def create_cityscapes_coco_panoptic(args):
 
                 instance = coco_json_data[id]
                 bbox = instance["bbox"]
-                segment_name = instance["semantic_names"][0]
+                segment_name = instance["semantic_names"][0].strip()
 
                 coco_panoptic = np.asarray(Image.open(os.path.join(cocoInstancePath, instance["panoptic_image"])))
                 coco_image = np.asarray(Image.open(os.path.join(cocoInstancePath, instance["rgb_image"])))
@@ -573,7 +602,7 @@ def create_cityscapes_coco_panoptic(args):
                 sky_pixels = np.where(sky_pixel_mask > 0)
 
 
-                road_random_pixel = random.randint(0, len(road_pixels[0]))
+                road_random_pixel = random.randint(0, len(road_pixels[0])-1)
                 start_width = road_pixels[1][road_random_pixel]
                 start_height = road_pixels[0][road_random_pixel] - coco_h
 
@@ -585,9 +614,9 @@ def create_cityscapes_coco_panoptic(args):
                 cityscape_relative_instance = coco_categories[segment_name][1]
                 cityscape_relative_scale_factor = coco_categories[segment_name][2]
 
-                disparity_at_start_pixel = cityscapes_disparity_img[start_height][start_width]
+                #disparity_at_start_pixel = cityscapes_disparity_img[start_height][start_width]
                 # consider averge of sorrounding pixels for more efficient
-                average_disparity = np.mean(cityscapes_disparity_img[start_height:start_height+coco_h, start_width: start_width+coco_w])
+                average_disparity = np.mean(cityscapes_disparity_img[road_pixels[0][road_random_pixel]:road_pixels[0][road_random_pixel]+10, road_pixels[1][road_random_pixel]: road_pixels[1][road_random_pixel]+10])
                 disparity_at_start_pixel = average_disparity
                 bin = np.digitize(np.array(disparity_at_start_pixel), bins)
 
@@ -794,7 +823,14 @@ def create_cityscapes_coco_panoptic(args):
         sys.stdout.flush()
 
 
-    print("\nSaving the json file {}".format(outFile))
+        if progress % 50 == 0:
+            print("\nSaving the json file {}".format(outFile))
+            d = {'images': images,
+                 'annotations': annotations,
+                 'categories': categories}
+            with open(outFile, 'w') as f:
+                json.dump(d, f, sort_keys=True, indent=4)
+    print("\nSaving the final json file {}".format(outFile))
     d = {'images': images,
          'annotations': annotations,
          'categories': categories}
@@ -806,27 +842,27 @@ def main():
     parser.add_argument("--cityscapes-folder",
                         dest="cityscapesPath",
                         help="path to the Cityscapes dataset 'gtFine' folder",
-                        default="/export/kiran/cityscapes",
+                        default="/home/kumarasw/OOD_dataset/cityscapes_ood_unseen/filtered_cityscapes_ood_unseen/cityscapes",
                         type=str)
     parser.add_argument("--cityscapes-split",
                         dest="cityscapesSplit",
                         help="cityscapes data split to be used to create the OOD dataset",
-                        default="train",
+                        default="val",
                         type=str)
     parser.add_argument("--coco-instance-path",
                         dest="cocoInstancePath",
                         help="path to the COCO dataset folder",
-                        default="/home/kumarasw/OOD_dataset/filtered_coco_instances",
+                        default="/home/kumarasw/OOD_dataset/filtered_web_val_ood_instances",
                         type=str)
     parser.add_argument("--ood-split",
                         dest="oodSplit",
                         help="coco data split to be used to create the OOD dataset",
-                        default="train",
+                        default="test",
                         type=str)
     parser.add_argument("--output-folder",
                         dest="outputFolder",
                         help="path to the output folder.",
-                        default="/home/kumarasw/kiran",
+                        default="/home/kumarasw/OOD_dataset/cityscapes_web_ood",
                         type=str)
     parser.add_argument("--use-train-id", action="store_true", dest="useTrainId")
 

@@ -45,10 +45,62 @@ coco_categories = {
     "cup": ("road", "person", 0.4, "test"),
     "toaster": ("road", "person", 0.4, "test"),
     "surfboard": ("road", "person", 0.4, "test")
-
 }
 
-ood_train_id = 20
+'''coco_categories = {
+    "dog": ("road", "car", 0.2, "test"),
+    "horse": ("road", "car", 1, "test"),
+    "buffallo": ("road", "car", 1, "test"),
+    "lion": ("road", "car", 0.5, "test"),
+    "sheep": ("road", "car", 0.4, "test"),
+    "elephant": ("road", "car", 2, "test"),
+    "deer": ("road", "car", 0.4, "test"),
+    "ostritch": ("road", "car", 0.5, "test"),
+    "hen": ("road", "car", 0.05, "test"),
+    "ducks": ("road", "car", 0.05, "test"),
+    "trash bin": ("road", "car", 0.3, "test"),
+    "brick": ("road", "car", 0.05, "test"),
+    "suitcase": ("road", "car", 0.2, "test"),
+    "chair": ("road", "car", 0.3, "test"),
+    "ball": ("road", "car", 0.05, "test"),
+    "umbrella": ("road", "car", 0.3, "test"),
+    "bottle": ("road", "car", 0.05, "test"),
+    "helmet": ("road", "car", 0.05, "test"),
+    "rickshaw": ("road", "car", 1, "test"),
+    "wooden box": ("road", "car", 0.2, "test"),
+    "road blocker": ("road", "car", 0.3, "test"),
+    "baby stroller": ("road", "car", 0.3, "test"),
+    "tyre": ("road", "car", 0.2, "test"),
+    "speaker": ("road", "car", 0.2, "test"),
+    "barrel": ("road", "car", 0.4, "test"),
+    "fire extinguisher": ("road", "car", 0.15, "test"),
+    "buldozer": ("road", "car", 2, "test"),
+    "trolley": ("road", "car", 0.3, "test"),
+    "bird": ("road", "car", 0.05, "test"),
+    "bear": ("road", "car", 0.5, "test"),
+    "cow": ("road", "car", 1, "test"),
+    "tiger": ("road", "car", 0.5, "test"),
+    "fire hydrant": ("road", "car", 0.2, "test"),
+    "portable public toilet": ("road", "car", 1, "test"),
+    "drone": ("road", "car", 0.1, "test"),
+    "skating board": ("road", "car", 0.15, "test"),
+    "wolf": ("road", "car", 0.4, "test"),
+    "cat": ("road", "car", 0.1, "test"),
+    "hand bag": ("road", "car", 0.15, "test"),
+    "barricade": ("road", "car", 0.6, "test"),
+    "shoe": ("road", "car", 0.05, "test"),
+    "rucksack": ("road", "car", 0.2, "test"),
+    "lawn mover": ("road", "car", 0.3, "test"),
+    "robot": ("road", "car", 0.4, "test"),
+    "wooden log": ("road", "car", 0.2, "test"),
+    "sofa chair": ("road", "car", 0.8, "test"),
+    "boat": ("road", "car", 0.8, "test"),
+    "giraffe": ("road", "car", 2, "test"),
+    "tortoise": ("road", "car", 0.1, "test"),
+    "unknown": ("road", "car", 0.4, "train")
+}
+'''
+ood_train_id = 19
 ood_id = 50
 
 # The main method

@@ -184,15 +184,16 @@ def convert2panoptic(bddPath=None, jsonFile=None, outputFolder=None, useTrainId=
             rgb_image_file = os.path.join(bddPath, "images", "10k", setName, imageId+".jpg")
             rgb_image = np.array(Image.open(rgb_image_file))
 
-            originalFormat = cv2.resize(originalFormat, dsize=(2048, 1024),
+            '''originalFormat = cv2.resize(originalFormat, dsize=(2048, 1024),
                                        interpolation=cv2.INTER_NEAREST)
             rgb_image = cv2.resize(rgb_image, dsize=(2048, 1024),
-                                       interpolation=cv2.INTER_NEAREST)
+                                       interpolation=cv2.INTER_NEAREST)'''
 
             inputFileName = city_name+"_"+imageId+ "_0_leftImg8bit.png"
             outputFileName = city_name + "_"+ imageId+ "_0_gtFine"+ "_panoptic.png"
             labelIdsName = city_name + "_"+ imageId + "_0_gtFine"+ "_labelIds.png"
             instanceIdsName = city_name + "_"+ imageId + "_0_gtFine"+ "_instanceIds.png"
+            labelTrainIdsName = city_name + "_"+ imageId + "_0_gtFine"+ "_labelTrainIds.png"
 
             # image entry, id for image is its filename without extension
             images.append({"id": imageId,
@@ -211,6 +212,9 @@ def convert2panoptic(bddPath=None, jsonFile=None, outputFolder=None, useTrainId=
             instance_format = np.zeros(
                 (originalFormat.shape[0], originalFormat.shape[1]), dtype=np.uint32
             )
+            semantic_train = np.ones(
+                (originalFormat.shape[0], originalFormat.shape[1]), dtype=np.uint8
+            ) * 255
 
             segmentIds = np.unique(originalFormat)
             bdd_seg_info = annotation_map[imageId]['segments_info']
@@ -256,6 +260,7 @@ def convert2panoptic(bddPath=None, jsonFile=None, outputFolder=None, useTrainId=
                 color = [encoded_segmentId % 256, encoded_segmentId // 256, encoded_segmentId // 256 // 256]
                 pan_format[mask] = color
                 semantic_format[mask] = categoryId
+                semantic_train[mask] =  labels[categoryId].trainId
                 instance_format[mask] = encoded_segmentId
 
                 area = np.sum(mask) # segment area computation
@@ -284,6 +289,7 @@ def convert2panoptic(bddPath=None, jsonFile=None, outputFolder=None, useTrainId=
             Image.fromarray(pan_format).save(os.path.join(panopticFolder, outputFileName))
             Image.fromarray(semantic_format).save(os.path.join(outputFolder, "bdd", "gtFine", setName,city_name, labelIdsName))
             Image.fromarray(instance_format).save(os.path.join(outputFolder, "bdd", "gtFine", setName,city_name, instanceIdsName))
+            Image.fromarray(semantic_train).save(os.path.join(outputFolder, "bdd", "gtFine", setName, city_name, labelTrainIdsName))
 
             Image.fromarray(rgb_image).save(os.path.join(outputFolder, "bdd", "leftImg8bit", setName,city_name, inputFileName))
 
@@ -315,14 +321,14 @@ def main():
     parser.add_argument("--output-folder",
                         dest="outputFolder",
                         help="path to the folder ",
-                        default="/home/kumarasw/OOD_dataset/bdd",
+                        default="/home/kumarasw/OOD_dataset/bdd_new",
                         type=str)
     parser.add_argument("--use-train-id", action="store_true", dest="useTrainId")
     parser.add_argument("--set-names",
                         dest="setNames",
                         help="set names to which apply the function to",
                         nargs='+',
-                        default=["val", "train"],
+                        default=["val"],
                         type=str)
     args = parser.parse_args()
 

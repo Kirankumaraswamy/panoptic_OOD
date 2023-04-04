@@ -1,3 +1,5 @@
+import random
+
 import cv2
 import argparse
 import os
@@ -6,7 +8,7 @@ import shutil
 import json
 import numpy as np
 
-sampled_image_count = 9
+sampled_image_count = 6
 
 def display_to_filter_images(args):
     bddOODFolder = args.bddOODFolder
@@ -85,7 +87,7 @@ def display_to_filter_images(args):
             os.makedirs(rgb_image_folder)
             os.makedirs(os.path.join(saved_instance_dir, mode, bddSplit, cityname))
 
-        sampled_images = []
+        '''sampled_images = []
         for i in range(sampled_image_count):
             img = cv2.imread(os.path.join(bddOODFolder, "leftImg8bit", bddSplit, cityname,
                                            image_id + "_leftImg8bit_"+str(i)+".png"))
@@ -94,13 +96,14 @@ def display_to_filter_images(args):
 
         horizontal_1 = np.concatenate((sampled_images[0], sampled_images[1], sampled_images[2]), axis=1)
         horizontal_2 = np.concatenate((sampled_images[3], sampled_images[4], sampled_images[5]), axis=1)
-        horizontal_3 = np.concatenate((sampled_images[6], sampled_images[7], sampled_images[8]), axis=1)
-        verticle = np.concatenate((horizontal_1, horizontal_2, horizontal_3), axis=0)
+        #horizontal_3 = np.concatenate((sampled_images[6], sampled_images[7], sampled_images[8]), axis=1)
+        verticle = np.concatenate((horizontal_1, horizontal_2), axis=0)
 
-        cv2.imshow("Image order 1, 2, 3 in the top  and 4, 5, 6 at middle and 7, 8, 9 at bottom", verticle)
+        cv2.imshow("Image order 1, 2, 3 in the top  and 4, 5, 6 at middle and 7, 8, 9 at bottom", verticle)'''
 
         while True:
-            k = cv2.waitKey(0) & 0xFF
+            k = int(list(key_to_image_map.keys())[0])
+            #k = cv2.waitKey(0) & 0xFF
             if k == 27:
                 cv2.destroyAllWindows()
                 cv2.destroyAllWindows()
@@ -143,11 +146,13 @@ def display_to_filter_images(args):
                     line = saved_id+ "\t" + str(image_no+1)
                     f.write(line)
                     f.write("\n")
-                with open(saved_instance_json_file, 'w') as f:
-                    json.dump(saved_instance_gt, f, sort_keys=True, indent=4)
+                '''with open(saved_instance_json_file, 'w') as f:
+                    json.dump(saved_instance_gt, f, sort_keys=True, indent=4)'''
 
                 cv2.destroyAllWindows()
                 break
+    with open(saved_instance_json_file, 'w') as f:
+        json.dump(saved_instance_gt, f, sort_keys=True, indent=4)
 
 
 def main():
@@ -155,17 +160,17 @@ def main():
     parser.add_argument("--bdd-ood-folder",
                         dest="bddOODFolder",
                         help="path to the Bdd OOD sampled instances",
-                        default="/home/kumarasw/OOD_dataset/bdd/bdd_ood",
+                        default="/home/kumarasw/OOD_dataset/web_ood_rohit/bdd_ood",
                         type=str)
     parser.add_argument("--filtered-path",
                         dest="filteredPath",
                         help="path to save filters instances",
-                        default="/home/kumarasw/OOD_dataset/bdd/bdd_filtered",
+                        default="/home/kumarasw/OOD_dataset/web_ood_rohit/bdd_train_filtered",
                         type=str)
     parser.add_argument("--bdd-split",
                         dest="bddSplit",
                         help="bdd data split to be used to create the OOD dataset",
-                        default="val",
+                        default="train",
                         type=str)
 
     args = parser.parse_args()
